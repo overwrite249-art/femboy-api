@@ -105,7 +105,9 @@ function request(key: string, dialect: Dialect = "bearer", ip = "203.0.113.7"): 
 			)
 			break
 		case "query":
-			url = `https://gateway.test/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`
+			url =
+				"https://gateway.test/v1beta/models/gemini-2.0-flash:generateContent?key=" +
+				encodeURIComponent(key)
 			break
 	}
 	return new Request(url, { method: "POST", headers })
@@ -149,13 +151,28 @@ test("key parsing is strict and extracts directives", () => {
 
 test("a valid key authenticates through every provider dialect", async () => {
 	const generated = await seed()
-	const dialects: Dialect[] = ["bearer", "anthropic", "google", "azure", "midjourney", "websocket", "query"]
+	const dialects: Dialect[] = [
+		"bearer",
+		"anthropic",
+		"google",
+		"azure",
+		"midjourney",
+		"websocket",
+		"query",
+	]
 	for (const dialect of dialects) {
-		const context = await authenticate(request(generated.key, dialect))
+		const req = request(generated.key, dialect)
+		// Guard against a helper that silently builds the wrong request.
+		if (dialect === "query") {
+			assert.equal(new URL(req.url).searchParams.get("key"), generated.key)
+			assert.equal(req.headers.get("authorization"), null)
+		}
+		const context = await authenticate(req)
 		assert.equal(context.identity.userId, "u1", `${dialect} should authenticate`)
 		assert.equal(context.identity.tokenId, "t1")
 		assert.equal(context.identity.group, "default")
 		assert.equal(context.identity.keyPrefix, generated.prefix)
+		assert.equal(context.source === "none", false)
 		assert.match(context.requestId, /^[0-9a-f]{32}$/)
 		// The credential must never survive into the context.
 		assert.ok(!JSON.stringify(context).includes(generated.secret))
@@ -166,7 +183,7 @@ test("an unknown prefix and a wrong secret are indistinguishable and slow", asyn
 	const generated = await seed()
 
 	const wrongSecret = `sk-${generated.prefix}${"q".repeat(48)}`
-	const unknownPrefix = `sk-${"zzzzzzzz"}${generated.secret}`
+	const unknownPrefix = `sk-zzzzzzzz${generated.secret}`
 
 	const startWrong = Date.now()
 	await assert.rejects(() => authenticate(request(wrongSecret)))
@@ -198,7 +215,9 @@ test("disabled and expired credentials are refused", async () => {
 
 test("a console session token cannot authenticate the relay", async () => {
 	await seed()
-	await assert.rejects(() => authenticate(request("sess-abcdef0123456789abcdef0123456789abcdef0123456789")))
+	await assert.rejects(() =>
+		authenticate(request("sess-abcdef0123456789abcdef0123456789abcdef0123456789")),
+	)
 })
 
 test("the ip allowlist is enforced and fails closed", async () => {
@@ -211,7 +230,9 @@ test("the ip allowlist is enforced and fails closed", async () => {
 	const headers = new Headers()
 	headers.set("authorization", `Bearer ${generated.key}`)
 	await assert.rejects(() =>
-		authenticate(new Request("https://gateway.test/v1/chat/completions", { method: "POST", headers })),
+		authenticate(
+			new Request("https://gateway.test/v1/chat/completions", { method: "POST", headers }),
+		),
 	)
 })
 
@@ -221,7 +242,9 @@ test("the client address is read from the right of x-forwarded-for", async () =>
 	// apparent address: with one trusted hop the real client is the last entry.
 	const forged = await authenticate(request(generated.key, "bearer", "10.0.0.1, 203.0.113.5"))
 	assert.equal(forged.identity.userId, "u1")
-	await assert.rejects(() => authenticate(request(generated.key, "bearer", "203.0.113.5, 198.51.100.9")))
+	await assert.rejects(() =>
+		authenticate(request(generated.key, "bearer", "203.0.113.5, 198.51.100.9")),
+	)
 })
 
 test("the model allowlist honours a single trailing wildcard", async () => {
