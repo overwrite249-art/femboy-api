@@ -5,16 +5,42 @@
  * the same return tuple as its Lua counterpart - the security tests exercise
  * this path, so any divergence would make the tests lie about production.
  *
- * They are written as a single `await`-free critical section wherever a
- * read-modify-write happens, which is what preserves atomicity on the
- * single-threaded event loop.
+ * Atomicity matters as much as the return values. Redis executes a Lua script
+ * to completion before running anything else, so a read-modify-write inside a
+ * script is indivisible. These twins await between their reads and writes,
+ * which on the event loop lets concurrent callers interleave: ten requests
+ * could each read the same balance and each conclude there was room. That
+ * would make the ledger look safe under test while overselling in production.
+ *
+ * `runScriptTwin` therefore funnels every invocation through a promise chain,
+ * so one script finishes before the next begins. This is the twin's stand-in
+ * for Redis being single-threaded.
  */
 
 import type { RedisLike } from "./client.ts"
 import type { ScriptName } from "./lua.ts"
 import { MemoryRedis } from "./memory.ts"
 
+/** Tail of the serialised execution chain. */
+let scriptChain: Promise<unknown> = Promise.resolve()
+
 export async function runScriptTwin(
+	redis: RedisLike,
+	name: ScriptName,
+	keys: string[],
+	args: Array<string | number>,
+): Promise<number[]> {
+	// Queue behind whatever is already running, and let the next caller queue
+	// behind this one regardless of how it settles.
+	const run = scriptChain.then(() => dispatch(redis, name, keys, args))
+	scriptChain = run.then(
+		() => undefined,
+		() => undefined,
+	)
+	return run
+}
+
+async function dispatch(
 	redis: RedisLike,
 	name: ScriptName,
 	keys: string[],
