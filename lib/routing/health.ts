@@ -51,6 +51,25 @@ export async function openChannels(channelIds: string[]): Promise<Set<string>> {
 }
 
 /**
+ * How many consecutive failures may occur before a channel is disabled for
+ * good.
+ *
+ * The two thresholds are configured independently, and the shipped defaults
+ * have auto-disable (3) below the breaker threshold (5). Taken literally that
+ * means a channel is permanently removed - needing an operator to bring it
+ * back - before the temporary cooldown it was designed to receive ever
+ * applies, so a brief upstream blip becomes a support ticket.
+ *
+ * Flooring one at the other keeps the ordering that makes the pair coherent:
+ * degrade recoverably first, remove permanently only if that did not help.
+ */
+function autoDisableAfter(): number {
+	const configured = config.channelAutoDisableFails
+	if (configured <= 0) return 0 // explicitly disabled
+	return Math.max(configured, config.channelFailureThreshold)
+}
+
+/**
  * Records the result of using a channel.
  *
  * Consecutive failures trip the breaker; a single success clears the counter,
@@ -68,10 +87,11 @@ export async function recordChannelOutcome(channelId: string, ok: boolean): Prom
 		tripped = toNumber(result?.[0]) === 1
 		fails = toNumber(result?.[1])
 	} catch {
+		// Health bookkeeping must never fail the request that triggered it.
 		return { tripped: false, fails: 0, autoDisabled: false }
 	}
 
-	const limit = config.channelAutoDisableFails
+	const limit = autoDisableAfter()
 	if (!ok && limit > 0 && fails >= limit) {
 		const disabled = await autoDisableChannel(channelId, fails)
 		return { tripped, fails, autoDisabled: disabled }
@@ -111,7 +131,7 @@ export async function resetChannelHealth(channelId: string): Promise<void> {
 	await redisCommand(["DEL", K.channelHealth(channelId)]).catch(() => undefined)
 }
 
-/** Current failure count, for the admin console. */
+/** Current consecutive failure count, for the admin console. */
 export async function channelFailCount(channelId: string): Promise<number> {
 	const raw = await redisCommand(["HGET", K.channelHealth(channelId), "fails"]).catch(() => null)
 	return toNumber(raw)

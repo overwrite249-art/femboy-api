@@ -3,6 +3,9 @@ import assert from "node:assert/strict"
 
 process.env.CHANNEL_KEY_MASTER = "unit-test-master-key-0123456789abcdef"
 process.env.CHANNEL_KEY_VERSION = "1"
+// Auto-disable is exercised in its own tests; leaving it on would permanently
+// remove channels midway through the breaker tests and mask what they check.
+process.env.CHANNEL_AUTO_DISABLE_FAILS = "0"
 
 import { config } from "../../lib/config/env.ts"
 import { channelKeys, channels, modelMappings, setDb } from "../../lib/db/index.ts"
@@ -25,6 +28,9 @@ import {
 	weightedPick,
 	WEIGHT_FLOOR,
 } from "../../lib/routing/index.ts"
+
+/** Every routing failure surfaces as the same opaque 503. */
+const UNAVAILABLE = /no channel is able to serve/i
 
 function channelDoc(overrides: Partial<ChannelDoc> & { _id: string }): ChannelDoc {
 	return {
@@ -54,12 +60,6 @@ async function fresh(docs: ChannelDoc[] = []) {
 	for (const doc of docs) await collection.insertOne(doc)
 }
 
-/** A deterministic stand-in for Math.random. */
-function sequence(values: number[]): () => number {
-	let i = 0
-	return () => values[Math.min(i++, values.length - 1)]
-}
-
 test("tiers are ordered by descending priority", () => {
 	const tiers = tiersOf([
 		{ channelId: "low", priority: 1, weight: 0 },
@@ -82,7 +82,8 @@ test("retries walk down the tiers and then stay put", () => {
 	assert.equal(electFrom(candidates, { attempt: 0 })?.channelId, "a")
 	assert.equal(electFrom(candidates, { attempt: 1 })?.channelId, "b")
 	assert.equal(electFrom(candidates, { attempt: 2 })?.channelId, "c")
-	// Past the last tier the clamp must hold rather than wrap back to the top.
+	// Past the last tier the clamp must hold rather than wrap back to the top,
+	// which would send a retry straight back to the channel that just failed.
 	assert.equal(electFrom(candidates, { attempt: 3 })?.channelId, "c")
 	assert.equal(electFrom(candidates, { attempt: 99 })?.channelId, "c")
 })
@@ -119,21 +120,15 @@ test("a group that was never granted is never served", async () => {
 	assert.equal(serves(channel, "default", "gpt-4o"), false)
 	// Nor another model.
 	assert.equal(serves(channel, "premium", "claude-3-opus"), false)
-	// A channel with no groups grants nothing.
+	// A channel with no groups grants nothing; absence of a grant is not a grant.
 	assert.equal(serves(channelDoc({ _id: "c2", groups: [] }), "default", "gpt-4o"), false)
 	// A disabled channel serves nobody, whatever it lists.
-	assert.equal(
-		serves(channelDoc({ _id: "c3", status: "disabled" }), "default", "gpt-4o"),
-		false,
-	)
+	assert.equal(serves(channelDoc({ _id: "c3", status: "disabled" }), "default", "gpt-4o"), false)
 	// An empty model list is the documented catch-all.
 	assert.equal(serves(channelDoc({ _id: "c4", models: [] }), "default", "anything"), true)
 
 	await fresh([channel])
-	await assert.rejects(
-		() => selectChannel({ group: "default", model: "gpt-4o" }),
-		/no channel serves/i,
-	)
+	await assert.rejects(() => selectChannel({ group: "default", model: "gpt-4o" }), UNAVAILABLE)
 })
 
 test("selection prefers the highest priority channel", async () => {
@@ -161,8 +156,7 @@ test("an open breaker removes a channel from rotation", async () => {
 	assert.equal(await isChannelOpen("flaky"), true)
 
 	// Traffic moves to the lower tier even though it is less preferred.
-	const selection = await selectChannel({ group: "default", model: "gpt-4o" })
-	assert.equal(selection.channel._id, "steady")
+	assert.equal((await selectChannel({ group: "default", model: "gpt-4o" })).channel._id, "steady")
 
 	// One success clears the counter and puts it straight back in rotation.
 	await recordChannelOutcome("flaky", true)
@@ -179,29 +173,59 @@ test("intermittent failures never accumulate into a trip", async () => {
 	assert.equal(await isChannelOpen("c1"), false)
 })
 
-test("a persistently broken channel is disabled outright", async () => {
-	await fresh([channelDoc({ _id: "broken" })])
-	const limit = config.channelAutoDisableFails
-	if (limit > 0) {
-		let result = { autoDisabled: false }
-		for (let i = 0; i < limit; i++) result = await recordChannelOutcome("broken", false)
-		assert.ok(result.autoDisabled, "should have been auto-disabled")
-
-		const stored = await (await channels()).findOne({ _id: "broken" })
-		assert.equal(stored?.status, "disabled")
-		assert.equal(stored?.autoDisabled, true)
-	}
-})
-
 test("every channel unhealthy is a clean failure, not a silent retry", async () => {
 	await fresh([channelDoc({ _id: "only" })])
 	for (let i = 0; i < config.channelFailureThreshold; i++) {
 		await recordChannelOutcome("only", false)
 	}
-	await assert.rejects(
-		() => selectChannel({ group: "default", model: "gpt-4o" }),
-		/unhealthy/i,
-	)
+	assert.equal(await isChannelOpen("only"), true)
+	// The channel is still enabled - it is temporarily out, not removed.
+	assert.equal((await (await channels()).findOne({ _id: "only" }))?.status, "enabled")
+	await assert.rejects(() => selectChannel({ group: "default", model: "gpt-4o" }), UNAVAILABLE)
+})
+
+test("a persistently broken channel is disabled outright", async () => {
+	await fresh([channelDoc({ _id: "broken" })])
+	process.env.CHANNEL_AUTO_DISABLE_FAILS = String(config.channelFailureThreshold)
+	try {
+		let autoDisabled = false
+		for (let i = 0; i < config.channelFailureThreshold; i++) {
+			autoDisabled = (await recordChannelOutcome("broken", false)).autoDisabled
+		}
+		assert.ok(autoDisabled, "should have been auto-disabled")
+
+		const stored = await (await channels()).findOne({ _id: "broken" })
+		assert.equal(stored?.status, "disabled")
+		assert.equal(stored?.autoDisabled, true)
+	} finally {
+		process.env.CHANNEL_AUTO_DISABLE_FAILS = "0"
+	}
+})
+
+test("permanent removal never precedes the temporary cooldown", async () => {
+	await fresh([channelDoc({ _id: "c1" })])
+	// An aggressive auto-disable set below the breaker threshold. Taken
+	// literally this would delete the channel from service before it ever got
+	// the recoverable cooldown, so the floor must hold it back.
+	process.env.CHANNEL_AUTO_DISABLE_FAILS = "1"
+	try {
+		const threshold = config.channelFailureThreshold
+		for (let i = 0; i < threshold - 1; i++) {
+			const outcome = await recordChannelOutcome("c1", false)
+			assert.equal(
+				outcome.autoDisabled,
+				false,
+				`disabled after ${i + 1} failures, before the breaker opened`,
+			)
+		}
+		assert.equal((await (await channels()).findOne({ _id: "c1" }))?.status, "enabled")
+
+		const final = await recordChannelOutcome("c1", false)
+		assert.ok(final.tripped, "breaker should open on the threshold failure")
+		assert.ok(final.autoDisabled, "and only then may the channel be removed")
+	} finally {
+		process.env.CHANNEL_AUTO_DISABLE_FAILS = "0"
+	}
 })
 
 test("already-tried channels are excluded from a retry", async () => {
@@ -223,32 +247,40 @@ test("already-tried channels are excluded from a retry", async () => {
 				model: "gpt-4o",
 				excludeChannelIds: ["first", "second"],
 			}),
-		/already been tried/i,
+		UNAVAILABLE,
 	)
 })
 
-test("affinity pins a conversation but only on the first attempt", async () => {
+test("affinity pins a conversation and outranks weight", async () => {
 	await fresh([
 		channelDoc({ _id: "a", priority: 10, weight: 1 }),
 		channelDoc({ _id: "b", priority: 10, weight: 1000 }),
 	])
 
-	// Force the first selection onto "a", then confirm it sticks despite "b"
-	// being overwhelmingly more likely by weight.
+	// Candidates are ordered by weight within a tier, so "b" comes first and a
+	// draw near the top of the range lands on "a".
+	assert.deepEqual(
+		(await candidatesFor("default", "gpt-4o")).map((c) => c.channelId),
+		["b", "a"],
+	)
+
 	const first = await selectChannel({
 		group: "default",
 		model: "gpt-4o",
 		affinityHash: "conv-1",
-		random: sequence([0]),
+		random: () => 0.999,
 	})
+	assert.equal(first.channel._id, "a")
+
+	// The pin holds even though "b" is ~90x more likely by weight.
 	for (let i = 0; i < 5; i++) {
 		const next = await selectChannel({
 			group: "default",
 			model: "gpt-4o",
 			affinityHash: "conv-1",
-			random: sequence([0.999]),
+			random: () => 0,
 		})
-		assert.equal(next.channel._id, first.channel._id)
+		assert.equal(next.channel._id, "a")
 	}
 
 	// A different conversation is not pinned to it.
@@ -256,9 +288,20 @@ test("affinity pins a conversation but only on the first attempt", async () => {
 		group: "default",
 		model: "gpt-4o",
 		affinityHash: "conv-2",
-		random: sequence([0.999]),
+		random: () => 0,
 	})
 	assert.equal(other.channel._id, "b")
+
+	// A retry must not honour the pin, or it would return to the same channel.
+	const retry = await selectChannel({
+		group: "default",
+		model: "gpt-4o",
+		affinityHash: "conv-1",
+		attempt: 0,
+		excludeChannelIds: ["a"],
+		random: () => 0,
+	})
+	assert.equal(retry.channel._id, "b")
 })
 
 test("a stale ability row cannot authorise a channel", async () => {
@@ -266,22 +309,18 @@ test("a stale ability row cannot authorise a channel", async () => {
 	await rebuildAbilities()
 	assert.equal((await candidatesFor("default", "gpt-4o")).length, 1)
 
-	// Revoke the group without rebuilding: the cached row still points here.
+	// Revoke the group without rebuilding: the cached row still points here,
+	// but the channel is the authority and must refuse.
 	await (await channels()).updateOne({ _id: "c1" }, { $set: { groups: ["premium"] } })
-	await assert.rejects(
-		() => selectChannel({ group: "default", model: "gpt-4o" }),
-		/no eligible channel/i,
-	)
+	assert.equal((await candidatesFor("default", "gpt-4o")).length, 1)
+	await assert.rejects(() => selectChannel({ group: "default", model: "gpt-4o" }), UNAVAILABLE)
 })
 
 test("a channel disabled after the rebuild stops being selected", async () => {
 	await fresh([channelDoc({ _id: "c1" })])
 	await rebuildAbilities()
 	await (await channels()).updateOne({ _id: "c1" }, { $set: { status: "disabled" } })
-	await assert.rejects(
-		() => selectChannel({ group: "default", model: "gpt-4o" }),
-		/no eligible channel/i,
-	)
+	await assert.rejects(() => selectChannel({ group: "default", model: "gpt-4o" }), UNAVAILABLE)
 })
 
 test("rebuilding expands every group and model pair", async () => {
@@ -324,7 +363,7 @@ test("a circular mapping resolves instead of looping", async () => {
 	const mappings = await modelMappings()
 	await mappings.insertOne({ _id: "m1", from: "a", to: "b", createdAt: new Date() })
 	await mappings.insertOne({ _id: "m2", from: "b", to: "a", createdAt: new Date() })
-	// Each layer applies once, so this terminates.
+	// Each layer applies at most once, so this terminates.
 	assert.equal((await resolveModel("a", channelDoc({ _id: "c1" }))).mapped, "b")
 })
 
@@ -350,7 +389,7 @@ test("channel keys rotate and are only decrypted at use", async () => {
 		})
 	}
 
-	// The stored form must not contain the credential.
+	// The stored form must not contain the credential (GW-002).
 	const stored = await keys.findOne({ _id: "k0" })
 	assert.ok(stored)
 	assert.equal(JSON.stringify(stored).includes("sk-upstream-one"), false)

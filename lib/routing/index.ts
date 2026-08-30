@@ -7,6 +7,11 @@
  * is handed back. An ability row is a derived artefact and can outlive the
  * grant that produced it, so treating it as an authorisation decision would
  * let a removed group keep working until a cron catches up.
+ *
+ * Every failure path raises the same 503. The reasons differ - nothing
+ * configured, everything already tried, everything unhealthy - but that is
+ * routing topology, and describing it to the caller would tell an attacker how
+ * many channels exist and which are failing.
  */
 
 import { config } from "../config/env.ts"
@@ -37,7 +42,7 @@ export type SelectionRequest = {
 export type Selection = {
 	channel: ChannelDoc
 	model: ResolvedModel
-	/** Candidates considered, for diagnostics. */
+	/** Candidates that survived filtering, for diagnostics. */
 	considered: number
 }
 
@@ -47,22 +52,16 @@ export async function selectChannel(request: SelectionRequest): Promise<Selectio
 	const excluded = new Set(request.excludeChannelIds ?? [])
 
 	const all = await candidatesFor(group, model)
-	if (all.length === 0) {
-		throw noChannelAvailable(`no channel serves ${model} for group ${group}`)
-	}
+	if (all.length === 0) throw noChannelAvailable(model, group)
 
 	const notExcluded = all.filter((c) => !excluded.has(c.channelId))
-	if (notExcluded.length === 0) {
-		throw noChannelAvailable(`every channel for ${model} has already been tried`)
-	}
+	if (notExcluded.length === 0) throw noChannelAvailable(model, group)
 
 	// Open breakers are removed rather than deprioritised. Routing to a channel
 	// known to be failing wastes the caller's retry budget.
 	const open = await openChannels(notExcluded.map((c) => c.channelId))
 	const healthy = notExcluded.filter((c) => !open.has(c.channelId))
-	if (healthy.length === 0) {
-		throw noChannelAvailable(`all channels for ${model} are currently unhealthy`)
-	}
+	if (healthy.length === 0) throw noChannelAvailable(model, group)
 
 	const affinityChannelId = request.affinityHash
 		? await readAffinity(group, model, request.affinityHash)
@@ -91,7 +90,7 @@ export async function selectChannel(request: SelectionRequest): Promise<Selectio
  * Elects a candidate and confirms it is genuinely eligible.
  *
  * A candidate that fails verification is dropped and the election is retried
- * with the rest, so one stale row does not fail the request.
+ * with the rest, so one stale row does not fail the whole request.
  */
 async function electAndVerify(
 	candidates: Candidate[],
@@ -122,7 +121,7 @@ async function electAndVerify(
 		pool = pool.filter((c) => c.channelId !== elected.channelId)
 	}
 
-	throw noChannelAvailable(`no eligible channel serves ${options.model} for group ${options.group}`)
+	throw noChannelAvailable(options.model, options.group)
 }
 
 function affinityRule(group: string, model: string): string {
