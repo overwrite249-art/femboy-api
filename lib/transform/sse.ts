@@ -225,7 +225,15 @@ export function parseSseData<T = unknown>(data: string): T | null {
 	}
 }
 
-/** Decodes a byte stream into parsed events. */
+/**
+ * Decodes a byte stream into parsed events.
+ *
+ * The pull loops until it has something to hand over. A chunk that completes
+ * no event is the normal case for SSE, and returning from pull without
+ * enqueuing relies on the consumer calling pull again - which the streams
+ * specification asks for but not every runtime does. Looping here removes the
+ * dependency entirely.
+ */
 export function sseEventStream(
 	source: ReadableStream<Uint8Array>,
 	options: SseParserOptions = {},
@@ -237,14 +245,21 @@ export function sseEventStream(
 	return new ReadableStream<SseEvent>({
 		async pull(controller) {
 			try {
-				const { done, value } = await reader.read()
-				if (done) {
-					for (const event of parser.flush()) controller.enqueue(event)
-					controller.close()
-					return
+				for (;;) {
+					const { done, value } = await reader.read()
+					if (done) {
+						for (const event of parser.flush()) controller.enqueue(event)
+						controller.close()
+						return
+					}
+					// stream: true so a multibyte character split across two reads
+					// is held rather than replaced with U+FFFD.
+					const events = parser.push(decoder.decode(value, { stream: true }))
+					if (events.length > 0) {
+						for (const event of events) controller.enqueue(event)
+						return
+					}
 				}
-				const text = decoder.decode(value, { stream: true })
-				for (const event of parser.push(text)) controller.enqueue(event)
 			} catch (error) {
 				reader.cancel().catch(() => undefined)
 				controller.error(error)
@@ -266,13 +281,18 @@ export function encodeSseStream(
 	return new ReadableStream<Uint8Array>({
 		async pull(controller) {
 			try {
-				const { done, value } = await reader.read()
-				if (done) {
-					controller.close()
-					return
+				for (;;) {
+					const { done, value } = await reader.read()
+					if (done) {
+						controller.close()
+						return
+					}
+					const text = typeof value === "string" ? value : formatSse(value)
+					if (text.length > 0) {
+						controller.enqueue(encoder.encode(text))
+						return
+					}
 				}
-				const text = typeof value === "string" ? value : formatSse(value)
-				controller.enqueue(encoder.encode(text))
 			} catch (error) {
 				reader.cancel().catch(() => undefined)
 				controller.error(error)
