@@ -1,0 +1,40 @@
+{
+  "name": "femboy-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Femboy API - a serverless multi-provider AI API gateway (OpenAI / Anthropic / Gemini / Responses dialects) on Next.js + Vercel + MongoDB + Redis.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types --no-warnings \"tests/**/*.test.ts\"",
+    "test:security": "node --test --experimental-strip-types --no-warnings \"tests/security/**/*.test.ts\"",
+    "test:unit": "node --test --experimental-strip-types --no-warnings \"tests/unit/**/*.test.ts\"",
+    "harness": "node --experimental-strip-types --no-warnings scripts/harness.ts",
+    "smoke": "node --experimental-strip-types --no-warnings scripts/smoke.ts",
+    "db:indexes": "node --experimental-strip-types --no-warnings scripts/ensure-indexes.ts",
+    "db:seed": "node --experimental-strip-types --no-warnings scripts/seed.ts",
+    "bootstrap:admin": "node --experimental-strip-types --no-warnings scripts/create-admin.ts",
+    "verify:billing": "node --experimental-strip-types --no-warnings scripts/verify-billing.ts",
+    "check:secrets": "node --experimental-strip-types --no-warnings scripts/check-secrets.ts"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.35.0",
+    "mongodb": "^6.12.0",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "typescript": "^5.8.3"
+  }
+}
