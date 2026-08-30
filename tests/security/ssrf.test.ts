@@ -7,6 +7,7 @@ import { MemoryRedis } from "../../lib/redis/memory.ts"
 import { setRedis } from "../../lib/redis/client.ts"
 import {
 	assertUpstreamUrlAllowed,
+	hasAmbiguousHostEncoding,
 	isBlockedAddress,
 	looksLikeAddressLiteral,
 	setDnsResolver,
@@ -47,16 +48,35 @@ test("loopback and private ranges are refused in every notation", async () => {
 
 test("encoded address literals are refused", async () => {
 	fresh()
-	// Every one of these reaches 127.0.0.1 and parses cleanly as a URL.
+	// Each of these is a way of writing an address that the URL parser will
+	// rewrite. They are rejected for being ambiguous, not for where they land.
 	for (const url of [
 		"https://2130706433/v1", // decimal
 		"https://0x7f000001/v1", // hex
 		"https://0177.0.0.1/v1", // octal
 		"https://127.1/v1", // short form
-		"https://010.0.0.1/v1", // leading zero
+		"https://010.0.0.1/v1", // octal label, parses to the public 8.0.0.1
 	]) {
-		await blocked(url)
+		assert.match(await blocked(url), /ambiguous address encoding/i)
 	}
+})
+
+test("ambiguity is judged before the parser can rewrite the host", () => {
+	// The parser turns this into 8.0.0.1, a routable address the operator
+	// never wrote. Catching it depends on reading the original string.
+	assert.equal(new URL("https://010.0.0.1/").hostname, "8.0.0.1")
+	assert.equal(hasAmbiguousHostEncoding("https://010.0.0.1/v1"), true)
+
+	// Plain dotted quads and ordinary domains are left alone.
+	assert.equal(hasAmbiguousHostEncoding("https://93.184.216.34/v1"), false)
+	assert.equal(hasAmbiguousHostEncoding("https://8.0.0.1/v1"), false)
+	assert.equal(hasAmbiguousHostEncoding("https://0.0.0.0/v1"), false)
+	assert.equal(hasAmbiguousHostEncoding("https://api.example.com/v1"), false)
+	assert.equal(hasAmbiguousHostEncoding("https://api.example.com:8443/v1"), false)
+	assert.equal(hasAmbiguousHostEncoding("https://[::1]/v1"), false)
+	// A port or userinfo must not hide the host from the check.
+	assert.equal(hasAmbiguousHostEncoding("https://0177.0.0.1:443/v1"), true)
+	assert.equal(hasAmbiguousHostEncoding("https://user@0177.0.0.1/v1"), true)
 })
 
 test("a name that resolves inward is refused", async () => {

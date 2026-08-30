@@ -6,17 +6,18 @@
  * URL it is given is a confused deputy: it sits inside the network perimeter
  * and will happily read the cloud metadata endpoint on an attacker's behalf.
  *
- * Three things have to be true before a request leaves:
+ * Four things have to be true before a request leaves:
  *
  *  1. The URL is shaped like something we are willing to call at all - https,
  *     a sane port, no embedded credentials.
- *  2. The host is not an address literal in disguise. `http://2130706433/`
- *     and `http://0x7f.0.0.1/` both reach loopback, and `URL` parses both
- *     without complaint.
- *  3. Every address the host resolves to is publicly routable. Validating the
+ *  2. The host is written unambiguously. `URL` rewrites `0177.0.0.1` and
+ *     `2130706433` into dotted quads, which means the address that gets
+ *     validated is not always the one the operator typed.
+ *  3. The host is not a non-routable address literal.
+ *  4. Every address the host resolves to is publicly routable. Validating the
  *     name alone is useless when an attacker controls the DNS record.
  *
- * Point 3 still leaves a rebinding window between the check and the connect.
+ * Point 4 still leaves a rebinding window between the check and the connect.
  * Verdicts are cached only briefly, and the resolved addresses are returned so
  * a caller that can pin them does not have to trust DNS twice.
  */
@@ -71,6 +72,9 @@ const BLOCKED_HOSTS = new Set(["localhost", "metadata", "metadata.google.interna
 /** Ports we are willing to speak HTTP to when none are configured. */
 const DEFAULT_ALLOWED_PORTS = [80, 443, 8080, 8443]
 
+/** A dotted-quad label with no leading zeros: the only form we accept. */
+const PLAIN_V4_LABEL = /^(0|[1-9][0-9]{0,2})$/
+
 export type ResolvedUpstream = {
 	url: URL
 	hostname: string
@@ -99,6 +103,39 @@ export function looksLikeAddressLiteral(hostname: string): boolean {
 	const labels = hostname.split(".")
 	const last = labels[labels.length - 1] ?? ""
 	return /^[0-9]+$/.test(last) || /^0x[0-9a-f]+$/i.test(last)
+}
+
+/**
+ * Whether the host, as written, means something different after parsing.
+ *
+ * `new URL("https://010.0.0.1/").hostname` is `8.0.0.1`, because the parser
+ * reads `010` as octal. Validating the parsed value is therefore validating a
+ * different address than the one configured, and the parser's willingness to
+ * normalise is the only thing standing between `0177.0.0.1` and loopback.
+ *
+ * Rather than depend on that, any host whose numeric form is not a plain
+ * dotted quad is refused outright. No legitimate upstream is written this way.
+ */
+export function hasAmbiguousHostEncoding(rawUrl: string): boolean {
+	const match = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(rawUrl)
+	if (!match) return false
+
+	let authority = match[1] ?? ""
+	const at = authority.lastIndexOf("@")
+	if (at !== -1) authority = authority.slice(at + 1)
+	// Bracketed IPv6 has no octal ambiguity; it is checked as a literal.
+	if (authority.startsWith("[")) return false
+	const colon = authority.lastIndexOf(":")
+	const host = colon === -1 ? authority : authority.slice(0, colon)
+	if (!host) return false
+
+	const labels = host.split(".")
+	const last = labels[labels.length - 1] ?? ""
+	// Only address-literal attempts are in scope; domains are left alone.
+	if (!/^[0-9]+$/.test(last) && !/^0x[0-9a-f]+$/i.test(last)) return false
+	// A plain dotted quad is the one acceptable numeric form.
+	if (labels.length === 4 && labels.every((label) => PLAIN_V4_LABEL.test(label))) return false
+	return true
 }
 
 function stripBrackets(hostname: string): string {
@@ -156,6 +193,11 @@ export function setDnsResolver(next: DnsResolver | null): void {
  * returning a boolean, so no call site can forget to check the result.
  */
 export async function assertUpstreamUrlAllowed(rawUrl: string): Promise<ResolvedUpstream> {
+	// Before parsing, while the host still means what it says.
+	if (hasAmbiguousHostEncoding(rawUrl)) {
+		throw ssrfBlocked("upstream host uses an ambiguous address encoding")
+	}
+
 	let url: URL
 	try {
 		url = new URL(rawUrl)
@@ -202,7 +244,6 @@ export async function assertUpstreamUrlAllowed(rawUrl: string): Promise<Resolved
 	// An address literal is checked directly; there is nothing to resolve.
 	if (looksLikeAddressLiteral(hostname)) {
 		if (ipToBytes(hostname) === null) {
-			// Numeric-looking but not a valid address: an encoding trick.
 			throw ssrfBlocked("upstream host is a malformed address literal")
 		}
 		if (isBlockedAddress(hostname)) {
