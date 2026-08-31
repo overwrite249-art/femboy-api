@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import type { FormEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 function localPath(value: string | null): string {
@@ -26,8 +27,10 @@ export default function LoginPage() {
 	useEffect(() => {
 		let cancelled = false
 		fetch("/api/auth/session", { credentials: "same-origin" })
-			.then((response) => {
-				if (!cancelled && response.ok) router.replace(next)
+			.then(async (response) => {
+				if (cancelled || !response.ok) return
+				const body = (await response.json()) as { user?: unknown }
+				if (body.user) router.replace(next)
 			})
 			.catch(() => undefined)
 			.finally(() => {
@@ -38,7 +41,7 @@ export default function LoginPage() {
 		}
 	}, [router, next])
 
-	async function submit(event: React.FormEvent) {
+	async function submit(event: FormEvent) {
 		event.preventDefault()
 		setBusy(true)
 		setError("")
