@@ -1,0 +1,102 @@
+# Invariants that are easy to state and easy to break silently.
+#
+# These are written as regex rules on purpose: they need to hold for anyone
+# reading the diff, not only for someone who knows the AST.
+
+rules:
+  - id: no-framework-import-in-lib
+    languages: [generic]
+    severity: ERROR
+    message: >
+      lib/** must not import from next/*. The core is framework-free so it can be
+      tested without booting a server, and so route handlers stay thin.
+    paths:
+      include:
+        - lib/
+    pattern-regex: 'from ["'']next/'
+
+  - id: no-plain-comparison-of-digests
+    languages: [generic]
+    severity: ERROR
+    message: >
+      Compare digests with timingSafeEqualHex, never with === or !==. String
+      comparison short-circuits on the first differing byte and leaks a timing
+      oracle (GW-010).
+    paths:
+      include:
+        - lib/auth/
+        - lib/admin/
+    pattern-regex: '(keyDigest|codeDigest|passwordHash)\s*(===|!==)'
+
+  - id: no-raw-ip-persistence
+    languages: [generic]
+    severity: WARNING
+    message: >
+      Client addresses are stored as a keyed hash (hashIp), never as text
+      (GW-024). If you need to compare, compare hashes.
+    paths:
+      include:
+        - lib/
+      exclude:
+        - lib/http/redact.ts
+        - lib/auth/cidr.ts
+    pattern-regex: '(ip|clientIp|address)\s*:\s*clientIp'
+
+  - id: no-header-dump
+    languages: [generic]
+    severity: ERROR
+    message: >
+      Never log a whole header set: it contains the caller's credential. Use
+      loggableHeaders, which redacts.
+    paths:
+      include:
+        - lib/
+        - app/
+    pattern-regex: 'console\.(log|info|warn|error)\([^)]*(Object\.fromEntries\(\s*\w*\.?headers|req\.headers\b)'
+
+  - id: no-cookie-in-relay-auth
+    languages: [generic]
+    severity: ERROR
+    message: >
+      The relay authenticator must never read cookies. A console session is not
+      a relay credential (GW-018).
+    paths:
+      include:
+        - lib/auth/
+    pattern-regex: '["'']cookie["'']'
+
+  - id: no-prompt-persistence
+    languages: [generic]
+    severity: ERROR
+    message: >
+      Message content must never be written to the database or logs (GW-023).
+      Record shape via promptShape instead.
+    paths:
+      include:
+        - lib/usage/
+        - lib/admin/
+    pattern-regex: '(messages|prompt|contents)\s*:\s*(body|parsed|request)\.'
+
+  - id: require-explicit-runtime
+    languages: [generic]
+    severity: WARNING
+    message: >
+      Route handlers declare their runtime explicitly. The relay needs nodejs
+      because the MongoDB driver needs TCP.
+    paths:
+      include:
+        - app/api/
+    pattern-regex: 'export const dynamic'
+
+  - id: no-math-random-for-secrets
+    languages: [generic]
+    severity: ERROR
+    message: >
+      Math.random is not a CSPRNG. Use randomBytes, randomHex or
+      randomAlphanumeric from lib/util/crypto.ts.
+    paths:
+      include:
+        - lib/
+      exclude:
+        - lib/routing/election.ts
+    pattern-regex: 'Math\.random\('

@@ -1,0 +1,41 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, because a dependency that was clean on Monday may not be on Friday.
+    - cron: "0 6 * * 1"
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gateway invariants
+        run: semgrep --config .semgrep/gateway-rules.yml --error --metrics=off
+
+      - name: Community rulesets
+        run: semgrep --config p/typescript --config p/secrets --metrics=off
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install
+
+      - name: Dependency audit
+        run: bun audit || true
+
+      - name: Secret scan
+        run: bun scripts/check-secrets.ts

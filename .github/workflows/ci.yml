@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install
+
+      - name: Unit and security tests
+        run: bun test
+
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+      - name: Secret scan
+        run: bun scripts/check-secrets.ts
+
+      - name: Build
+        run: bun run build
+        env:
+          # A build must not require live services. If it does, that is the bug.
+          NEXT_TELEMETRY_DISABLED: "1"
