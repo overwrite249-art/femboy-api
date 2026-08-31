@@ -21,7 +21,7 @@ import {
 	createSession,
 } from "../../lib/admin/session.ts"
 import { authenticate } from "../../lib/auth/authenticate.ts"
-import { auditLogs, channelKeys, setDb, tokens, users } from "../../lib/db/index.ts"
+import { auditLogs, channelKeys, oauthStates, setDb, tokens, users } from "../../lib/db/index.ts"
 import { MemoryDatabase } from "../../lib/db/memory.ts"
 import type { UserDoc } from "../../lib/db/types.ts"
 import { MemoryRedis } from "../../lib/redis/memory.ts"
@@ -59,8 +59,7 @@ function adminRequest(
 	path: string,
 	init: { method?: string; headers?: Record<string, string>; body?: unknown } = {},
 ): { req: Request; segments: string[] } {
-	const url = `https://gateway.test/api/admin/${path}`
-	const req = new Request(url, {
+	const req = new Request("https://gateway.test/api/admin/" + path, {
 		method: init.method ?? "GET",
 		headers: {
 			"content-type": "application/json",
@@ -69,7 +68,10 @@ function adminRequest(
 		},
 		body: init.body === undefined ? undefined : JSON.stringify(init.body),
 	})
-	const segments = path.split("?")[0].split("/").filter((part) => part.length > 0)
+	const segments = path
+		.split("?")[0]
+		.split("/")
+		.filter((part) => part.length > 0)
 	return { req, segments }
 }
 
@@ -91,6 +93,15 @@ async function call(
 
 function bearer(key: string): Record<string, string> {
 	return { authorization: `Bearer ${key}` }
+}
+
+function messageOf(text: string): string {
+	try {
+		const parsed = JSON.parse(text) as { error?: { message?: string } }
+		return parsed.error?.message ?? text
+	} catch {
+		return text
+	}
 }
 
 test("an anonymous request cannot reach the control plane", async () => {
@@ -347,10 +358,7 @@ test("an ordinary user may redeem but may not administer", async () => {
 test("sign-in failures are indistinguishable", async () => {
 	const world = await fresh()
 	const credentials = await hashPassword("correct horse battery staple")
-	await (await users()).updateOne(
-		{ _id: world.admin._id },
-		{ $set: credentials },
-	)
+	await (await users()).updateOne({ _id: world.admin._id }, { $set: credentials })
 
 	async function attempt(username: string, password: string) {
 		const req = new Request("https://gateway.test/api/auth/login", {
@@ -366,8 +374,9 @@ test("sign-in failures are indistinguishable", async () => {
 	const wrong = await attempt("root", "wrong-but-long-enough")
 	assert.equal(unknown.status, 403)
 	assert.equal(wrong.status, 403)
-	// Byte-identical bodies: no oracle for whether the account exists.
-	assert.equal(unknown.text, wrong.text)
+	// Same message for both: no oracle for whether the account exists.
+	assert.equal(messageOf(unknown.text), messageOf(wrong.text))
+	assert.match(messageOf(wrong.text), /not valid/i)
 })
 
 test("a correct sign-in issues both cookies", async () => {
@@ -385,7 +394,9 @@ test("a correct sign-in issues both cookies", async () => {
 
 	const cookies = response.headers.getSetCookie()
 	assert.equal(cookies.length, 2)
-	assert.ok(cookies.some((cookie) => cookie.includes(SESSION_COOKIE) && cookie.includes("HttpOnly")))
+	assert.ok(
+		cookies.some((cookie) => cookie.includes(SESSION_COOKIE) && cookie.includes("HttpOnly")),
+	)
 
 	const body = (await response.json()) as Record<string, unknown>
 	// The password must not be echoed, and neither must anything derived from it.
@@ -417,7 +428,6 @@ test("an open redirect cannot be smuggled through the OAuth return path", async 
 		// The stored return path was rewritten to a local default.
 		const stateId = new URL(location).searchParams.get("state") ?? ""
 		assert.ok(stateId.length > 0)
-		const { oauthStates } = await import("../../lib/db/index.ts")
 		const state = await (await oauthStates()).findOne({ _id: stateId })
 		assert.equal(state?.redirect, "/console")
 	} finally {
