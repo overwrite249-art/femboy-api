@@ -16,8 +16,13 @@
     "app/api/v1/**/route.ts": { "maxDuration": 300, "memory": 1024 },
     "app/api/v1beta/**/route.ts": { "maxDuration": 300, "memory": 1024 },
     "app/api/mj/**/route.ts": { "maxDuration": 60, "memory": 1024 },
-    "app/api/task/**/route.ts": { "maxDuration": 60, "memory": 1024 },
+    "app/api/suno/**/route.ts": { "maxDuration": 60, "memory": 1024 },
+    "app/api/kling/**/route.ts": { "maxDuration": 60, "memory": 1024 },
+    "app/api/jimeng/**/route.ts": { "maxDuration": 60, "memory": 1024 },
+    "app/api/vidu/**/route.ts": { "maxDuration": 60, "memory": 1024 },
+    "app/api/dify/**/route.ts": { "maxDuration": 60, "memory": 1024 },
     "app/api/admin/**/route.ts": { "maxDuration": 60, "memory": 1024 },
+    "app/api/auth/**/route.ts": { "maxDuration": 60, "memory": 1024 },
     "app/api/cron/**/route.ts": { "maxDuration": 300, "memory": 1024 }
   }
 }
