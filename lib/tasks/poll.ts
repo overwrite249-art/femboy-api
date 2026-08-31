@@ -110,7 +110,11 @@ export function interpretPollResult(payload: unknown): Interpretation {
 	])
 
 	if (FAILURE_WORDS.includes(word)) {
-		return { status: "failure", progress, failReason: failReason || "the provider reported a failure" }
+		return {
+			status: "failure",
+			progress,
+			failReason: failReason || "the provider reported a failure",
+		}
 	}
 	if (SUCCESS_WORDS.includes(word)) {
 		return { status: "success", progress: "100%", result: flat }
@@ -188,7 +192,7 @@ export async function pollDueTasks(limit = 50): Promise<Record<string, number>> 
 				continue
 			}
 
-			const channel = await channels().findOne({ _id: task.channelId })
+			const channel = await (await channels()).findOne({ _id: task.channelId })
 			if (!channel) {
 				await updateTask(task.taskId, {
 					status: "failure",

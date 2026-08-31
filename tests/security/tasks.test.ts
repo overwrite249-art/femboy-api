@@ -57,7 +57,7 @@ async function messageOf(action: () => Promise<unknown>): Promise<string> {
 }
 
 beforeEach(async () => {
-	await tasks().deleteMany({})
+	await (await tasks()).deleteMany({})
 })
 
 describe("task identifiers", () => {
@@ -176,7 +176,10 @@ describe("polling schedule", () => {
 		})
 
 		const due = await dueTasks(10)
-		assert.equal(due.some((row) => row.taskId === done.taskId), false)
+		assert.equal(
+			due.some((row) => row.taskId === done.taskId),
+			false,
+		)
 		assert.equal(isTerminal("success"), true)
 		assert.equal(isTerminal("in_progress"), false)
 	})

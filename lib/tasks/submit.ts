@@ -76,7 +76,8 @@ function parseJsonObject(text: string): Record<string, unknown> {
 }
 
 async function candidateChannels(platform: string, group: string): Promise<ChannelDoc[]> {
-	const rows = await channels().find(
+	const collection = await channels()
+	const rows = await collection.find(
 		{ type: platform, status: "enabled" },
 		{ sort: { priority: -1 }, limit: 50 },
 	)

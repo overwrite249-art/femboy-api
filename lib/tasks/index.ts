@@ -87,13 +87,13 @@ export async function createTask(input: {
 		// Never the prompt. Shape only (GW-023).
 		properties: input.properties ?? {},
 	}
-	await tasks().insertOne(doc)
+	await (await tasks()).insertOne(doc)
 	return doc
 }
 
 export async function findTask(taskId: string): Promise<TaskDoc | null> {
 	if (!taskId) return null
-	return await tasks().findOne({ taskId })
+	return await (await tasks()).findOne({ taskId })
 }
 
 export async function requireTask(taskId: string, actor: TaskActor): Promise<TaskDoc> {
@@ -109,7 +109,7 @@ export async function listTasks(
 ): Promise<TaskDoc[]> {
 	const limit = Math.min(Math.max(1, options.limit ?? 50), 200)
 	const filter: Record<string, unknown> = actor.role === "user" ? { userId: actor.userId } : {}
-	return await tasks().find(filter, {
+	return await (await tasks()).find(filter, {
 		sort: { submitTime: -1 },
 		limit,
 		skip: Math.max(0, options.skip ?? 0),
@@ -117,7 +117,7 @@ export async function listTasks(
 }
 
 export async function updateTask(taskId: string, patch: Partial<TaskDoc>): Promise<void> {
-	await tasks().updateOne({ taskId }, { $set: patch as Record<string, unknown> })
+	await (await tasks()).updateOne({ taskId }, { $set: patch as Record<string, unknown> })
 }
 
 export async function markSubmitted(taskId: string, upstreamTaskId: string): Promise<void> {
@@ -138,7 +138,7 @@ export async function markSubmitted(taskId: string, upstreamTaskId: string): Pro
  * change nothing about the result.
  */
 export async function dueTasks(limit = 50): Promise<TaskDoc[]> {
-	const rows = await tasks().find({}, { sort: { submitTime: 1 }, limit: SCAN_LIMIT })
+	const rows = await (await tasks()).find({}, { sort: { submitTime: 1 }, limit: SCAN_LIMIT })
 	const now = Date.now()
 	const due: TaskDoc[] = []
 	for (const row of rows) {
