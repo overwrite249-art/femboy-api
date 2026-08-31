@@ -37,7 +37,7 @@ import { invalidRequest, notFound } from "../http/errors.ts"
 import { K } from "../redis/keys.ts"
 import { redisDel, redisGetJson, redisSetJson } from "../redis/client.ts"
 import { invalidateAbilities } from "../routing/abilities.ts"
-import { quotaToUsd } from "../pricing/index.ts"
+import { PRICING_VERSION, normalizeModelName, quotaToUsd } from "../pricing/index.ts"
 import { randomAlphanumeric, randomHex, sha256Hex } from "../util/crypto.ts"
 import { monthBucket } from "../util/time.ts"
 
@@ -64,6 +64,18 @@ function name(value: unknown, field: string, max = 200): string {
 // Pricing
 // ---------------------------------------------------------------------------
 
+/**
+ * Mirrors the key built in lib/pricing/index.ts.
+ *
+ * Worth stating plainly because it is an easy bug to write: `K.pricing()` is
+ * keyed by pricing *version*, not by model. The model name is a suffix. Using
+ * `K.pricing(model)` would delete a key nothing ever wrote, so a price edit
+ * would appear to succeed and then not take effect until the TTL expired.
+ */
+function pricingCacheKey(model: string): string {
+	return `${K.pricing(PRICING_VERSION)}:${normalizeModelName(model)}`
+}
+
 export async function listPricing(): Promise<ModelPricingDoc[]> {
 	return await (await modelPricing()).find({}, { limit: 500 })
 }
@@ -89,7 +101,7 @@ export async function upsertPricing(input: Record<string, unknown>): Promise<Mod
 
 	await (await modelPricing()).updateOne({ _id: model }, { $set: doc }, true)
 	// Drop the cached price so the next request bills at the new rate.
-	await redisDel(K.pricing(model))
+	await redisDel(pricingCacheKey(model))
 	const saved = await (await modelPricing()).findOne({ _id: model })
 	if (!saved) throw notFound("pricing row disappeared immediately after write")
 	return saved
@@ -97,7 +109,7 @@ export async function upsertPricing(input: Record<string, unknown>): Promise<Mod
 
 export async function deletePricing(model: string): Promise<void> {
 	await (await modelPricing()).deleteOne({ _id: model })
-	await redisDel(K.pricing(model))
+	await redisDel(pricingCacheKey(model))
 }
 
 // ---------------------------------------------------------------------------
@@ -111,9 +123,10 @@ export async function listMappings(): Promise<ModelMappingDoc[]> {
 export async function upsertMapping(input: Record<string, unknown>): Promise<ModelMappingDoc> {
 	const from = name(input.from, "from")
 	const to = name(input.to, "to")
-	const channelId = typeof input.channelId === "string" && input.channelId.trim()
-		? input.channelId.trim()
-		: undefined
+	const channelId =
+		typeof input.channelId === "string" && input.channelId.trim()
+			? input.channelId.trim()
+			: undefined
 	const id = channelId ? `${channelId}:${from}` : from
 	const doc: ModelMappingDoc = {
 		_id: id,
@@ -139,7 +152,8 @@ export async function listGroupRatios(): Promise<GroupRatioDoc[]> {
 export async function upsertGroupRatio(input: Record<string, unknown>): Promise<GroupRatioDoc> {
 	const group = name(input.group ?? input._id, "group", 64)
 	const ratio = positive(input.ratio, "ratio")
-	const doc = { _id: group, ratio, updatedAt: new Date() } as GroupRatioDoc
+	const doc: GroupRatioDoc = { _id: group, ratio, updatedAt: new Date() }
+	if (typeof input.description === "string") doc.description = input.description.slice(0, 500)
 	await (await groupRatios()).updateOne({ _id: group }, { $set: doc }, true)
 	return doc
 }
@@ -214,7 +228,9 @@ export async function redeemCode(
 	rawCode: string,
 	userId: string,
 ): Promise<{ quota: number; balance: number }> {
-	const code = name(rawCode, "code", 64).toUpperCase().replace(/[^A-Z0-9]/g, "")
+	const code = name(rawCode, "code", 64)
+		.toUpperCase()
+		.replace(/[^A-Z0-9]/g, "")
 
 	const attemptKey = K.redeemAttempts(userId)
 	const attempts = (await redisGetJson<{ n: number }>(attemptKey))?.n ?? 0
@@ -356,9 +372,9 @@ export async function listUsage(query: UsageQuery = {}): Promise<UsageLogDoc[]> 
 	return await collection.find(filter, { sort: { createdAt: -1 }, limit, skip })
 }
 
-export async function listAudit(options: { limit?: number; skip?: number } = {}): Promise<
-	AuditLogDoc[]
-> {
+export async function listAudit(
+	options: { limit?: number; skip?: number } = {},
+): Promise<AuditLogDoc[]> {
 	const limit = Math.min(Math.max(Math.floor(options.limit ?? 50), 1), 200)
 	const skip = Math.max(Math.floor(options.skip ?? 0), 0)
 	return await (await auditLogs()).find({}, { sort: { createdAt: -1 }, limit, skip })
