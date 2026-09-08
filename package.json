@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Femboy API - a serverless multi-provider AI API gateway (OpenAI / Anthropic / Gemini / Responses dialects) on Next.js + Vercel + MongoDB + Redis.",
+  "description": "Femboy API - a serverless multi-provider AI API gateway (OpenAI / Anthropic / Gemini / Responses dialects) on Next.js + Vercel + MongoDB, with optional Redis coordination.",
   "license": "MIT",
   "engines": {
     "node": ">=22.19.0"
@@ -27,6 +27,7 @@
     "migrate:quota": "node --experimental-strip-types --no-warnings scripts/migrate-quota-ledger.ts"
   },
   "dependencies": {
+    "lucide-react": "1.42.0",
     "mongodb": "^6.21.0",
     "next": "^15.5.25",
     "react": "^19.2.8",

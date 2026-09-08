@@ -19,7 +19,14 @@
 import { invalidateTokenCache } from "../auth/authenticate.ts"
 import { digestApiKey, generateApiKey, maskKey } from "../auth/keys.ts"
 import { config } from "../config/env.ts"
-import { channelKeys, channels, tokens, users, getDb, COLLECTIONS } from "../db/index.ts"
+import {
+	channelKeys,
+	channels,
+	tokens,
+	users,
+	getDb,
+	COLLECTIONS,
+} from "../db/index.ts"
 import type {
 	ChannelDoc,
 	ChannelKeyDoc,
@@ -53,17 +60,24 @@ function requireText(value: unknown, field: string, max = 200): string {
 	return value.trim()
 }
 
-function optionalNumber(value: unknown, field: string, fallback: number): number {
+function optionalNumber(
+	value: unknown,
+	field: string,
+	fallback: number,
+): number {
 	if (value === undefined || value === null) return fallback
 	const parsed = typeof value === "number" ? value : Number(value)
-	if (!Number.isFinite(parsed)) throw invalidRequest(`${field} must be a number`, field)
+	if (!Number.isFinite(parsed))
+		throw invalidRequest(`${field} must be a number`, field)
 	return parsed
 }
 
 function stringList(value: unknown, field: string): string[] {
 	if (value === undefined || value === null) return []
-	if (!Array.isArray(value)) throw invalidRequest(`${field} must be an array`, field)
-	if (value.length > 200) throw invalidRequest(`${field} has too many entries`, field)
+	if (!Array.isArray(value))
+		throw invalidRequest(`${field} must be an array`, field)
+	if (value.length > 200)
+		throw invalidRequest(`${field} has too many entries`, field)
 	return value.map((entry, index) => requireText(entry, `${field}[${index}]`))
 }
 
@@ -81,7 +95,10 @@ function asRole(value: unknown, fallback: UserRole): UserRole {
 function asStatus(value: unknown, fallback: EntityStatus): EntityStatus {
 	if (value === undefined || value === null) return fallback
 	if (typeof value !== "string" || !STATUSES.includes(value as EntityStatus)) {
-		throw invalidRequest("status must be enabled, disabled, or deleted", "status")
+		throw invalidRequest(
+			"status must be enabled, disabled, or deleted",
+			"status",
+		)
 	}
 	return value as EntityStatus
 }
@@ -92,7 +109,9 @@ function asStatus(value: unknown, fallback: EntityStatus): EntityStatus {
 
 export async function listUsers(options: ListOptions = {}): Promise<UserDoc[]> {
 	const { limit, skip } = page(options)
-	return await (await users()).find({}, { sort: { createdAt: -1 }, limit, skip })
+	return await (
+		await users()
+	).find({}, { sort: { createdAt: -1 }, limit, skip })
 }
 
 export async function getUser(id: string): Promise<UserDoc> {
@@ -101,18 +120,30 @@ export async function getUser(id: string): Promise<UserDoc> {
 	return user
 }
 
-export async function findUserByUsername(username: string): Promise<UserDoc | null> {
+export async function findUserByUsername(
+	username: string,
+): Promise<UserDoc | null> {
 	return await (await users()).findOne({ username })
 }
 
 /** Explicit response allowlist; password verifiers never leave the server. */
 export function userView(user: UserDoc) {
 	return {
-		_id: user._id, username: user.username, displayName: user.displayName,
-		email: user.email ?? "", role: user.role, status: user.status, group: user.group,
-		quota: user.quota, usedQuota: user.usedQuota, requestCount: user.requestCount,
-		rpmLimit: user.rpmLimit, tpmLimit: user.tpmLimit,
-		createdAt: user.createdAt, updatedAt: user.updatedAt, lastLoginAt: user.lastLoginAt,
+		_id: user._id,
+		username: user.username,
+		displayName: user.displayName,
+		email: user.email ?? "",
+		role: user.role,
+		status: user.status,
+		group: user.group,
+		quota: user.quota,
+		usedQuota: user.usedQuota,
+		requestCount: user.requestCount,
+		rpmLimit: user.rpmLimit,
+		tpmLimit: user.tpmLimit,
+		createdAt: user.createdAt,
+		updatedAt: user.updatedAt,
+		lastLoginAt: user.lastLoginAt,
 	}
 }
 
@@ -128,15 +159,20 @@ export async function createUser(
 	const doc: UserDoc = {
 		_id: randomHex(12),
 		username,
-		displayName: typeof input.displayName === "string" && input.displayName.trim()
-			? input.displayName.trim().slice(0, 200)
-			: username,
+		displayName:
+			typeof input.displayName === "string" && input.displayName.trim()
+				? input.displayName.trim().slice(0, 200)
+				: username,
 		...(typeof input.email === "string" && input.email.trim()
-			? { email: input.email.trim().slice(0, 200) } : {}),
+			? { email: input.email.trim().slice(0, 200) }
+			: {}),
 		...credentials,
 		role: asRole(input.role, "user"),
 		status: asStatus(input.status, "enabled"),
-		group: typeof input.group === "string" && input.group.trim() ? input.group.trim() : "default",
+		group:
+			typeof input.group === "string" && input.group.trim()
+				? input.group.trim()
+				: "default",
 		quota: quotaAmount(optionalNumber(input.quota, "quota", 0)),
 		quotaLedgerVersion: QUOTA_LEDGER_VERSION,
 		legacyUsedQuota: 0,
@@ -145,37 +181,74 @@ export async function createUser(
 		createdAt: now,
 		updatedAt: now,
 	}
-	await (await getDb()).transaction(async (db) => {
+	await (
+		await getDb()
+	).transaction(async (db) => {
 		const collection = db.collection<UserDoc>(COLLECTIONS.users)
-		if (await collection.findOne({ username })) throw invalidRequest("that username is taken", "username")
+		if (await collection.findOne({ username }))
+			throw invalidRequest("that username is taken", "username")
 		await collection.insertOne(doc)
 	})
 	return doc
 }
 
-export async function updateUser(id: string, patch: Record<string, unknown>): Promise<UserDoc> {
+export async function updateUser(
+	id: string,
+	patch: Record<string, unknown>,
+): Promise<UserDoc> {
 	const user = await getUser(id)
 	const update: Record<string, unknown> = { updatedAt: new Date() }
 
 	if (patch.displayName !== undefined) {
 		update.displayName = requireText(patch.displayName, "displayName")
 	}
-	if (patch.email !== undefined) update.email = String(patch.email).trim().slice(0, 200)
+	if (patch.email !== undefined)
+		update.email = String(patch.email).trim().slice(0, 200)
 	if (patch.role !== undefined) update.role = asRole(patch.role, user.role)
-	if (patch.status !== undefined) update.status = asStatus(patch.status, user.status)
-	if (patch.group !== undefined) update.group = requireText(patch.group, "group", 64)
-	if (patch.quota !== undefined) update.quota = quotaAmount(optionalNumber(patch.quota, "quota", user.quota))
-	if (patch.rpmLimit !== undefined) update.rpmLimit = optionalNumber(patch.rpmLimit, "rpmLimit", 0)
-	if (patch.tpmLimit !== undefined) update.tpmLimit = optionalNumber(patch.tpmLimit, "tpmLimit", 0)
+	if (patch.status !== undefined)
+		update.status = asStatus(patch.status, user.status)
+	if (patch.group !== undefined)
+		update.group = requireText(patch.group, "group", 64)
+	if (patch.quota !== undefined)
+		update.quota = quotaAmount(optionalNumber(patch.quota, "quota", user.quota))
+	if (patch.rpmLimit !== undefined)
+		update.rpmLimit = optionalNumber(patch.rpmLimit, "rpmLimit", 0)
+	if (patch.tpmLimit !== undefined)
+		update.tpmLimit = optionalNumber(patch.tpmLimit, "tpmLimit", 0)
 
 	const unsetEmail = update.email === ""
 	if (unsetEmail) delete update.email
-	await (await users()).updateOne({ _id: id }, { $set: update, ...(unsetEmail ? { $unset: { email: "" } } : {}) })
+	// Console balance edits carry a compare-and-set guard so in-flight billing
+	// or another operator cannot be overwritten by an amount from a stale table.
+	const filter: Record<string, unknown> = { _id: id }
+	if (patch.expectedQuota !== undefined) {
+		if (patch.quota === undefined)
+			throw invalidRequest(
+				"expectedQuota requires a quota update",
+				"expectedQuota",
+			)
+		filter.quota = quotaAmount(
+			optionalNumber(patch.expectedQuota, "expectedQuota", -1),
+		)
+	}
+	const result = await (
+		await users()
+	).updateOne(filter, {
+		$set: update,
+		...(unsetEmail ? { $unset: { email: "" } } : {}),
+	})
+	if (!result.matchedCount)
+		throw invalidRequest(
+			"The balance changed. Refresh the account and review the current amount before retrying.",
+			"expectedQuota",
+		)
 
 	// A disabled user's tokens must stop working now, not when the cache expires.
 	let after = ""
 	for (;;) {
-		const owned = await (await tokens()).find(
+		const owned = await (
+			await tokens()
+		).find(
 			{ userId: id, ...(after ? { _id: { $gt: after } } : {}) },
 			{ sort: { _id: 1 }, limit: 200 },
 		)
@@ -205,7 +278,9 @@ export async function listTokens(
 ): Promise<TokenView[]> {
 	const { limit, skip } = page(options)
 	const filter = userId ? { userId } : {}
-	const rows = await (await tokens()).find(filter, { sort: { createdAt: -1 }, limit, skip })
+	const rows = await (
+		await tokens()
+	).find(filter, { sort: { createdAt: -1 }, limit, skip })
 	return rows.map(tokenView)
 }
 
@@ -228,7 +303,9 @@ export async function createToken(
 	const generated = await generateApiKey()
 	const now = new Date()
 	const expiresAt =
-		input.expiresAt === undefined || input.expiresAt === null || input.expiresAt === ""
+		input.expiresAt === undefined ||
+		input.expiresAt === null ||
+		input.expiresAt === ""
 			? null
 			: new Date(String(input.expiresAt))
 	if (expiresAt && Number.isNaN(expiresAt.getTime())) {
@@ -238,7 +315,10 @@ export async function createToken(
 	const doc: TokenDoc = {
 		_id: randomHex(12),
 		userId,
-		name: typeof input.name === "string" && input.name.trim() ? input.name.trim().slice(0, 120) : "key",
+		name:
+			typeof input.name === "string" && input.name.trim()
+				? input.name.trim().slice(0, 120)
+				: "key",
 		keyPrefix: generated.prefix,
 		keyDigest: generated.digest,
 		keyLast4: generated.last4,
@@ -264,16 +344,24 @@ export async function updateToken(
 	const token = await getToken(id)
 	const update: Record<string, unknown> = { updatedAt: new Date() }
 
-	if (patch.name !== undefined) update.name = requireText(patch.name, "name", 120)
-	if (patch.status !== undefined) update.status = asStatus(patch.status, token.status)
-	if (patch.quota !== undefined) update.quota = quotaAmount(optionalNumber(patch.quota, "quota", token.quota))
-	if (patch.unlimitedQuota !== undefined) update.unlimitedQuota = patch.unlimitedQuota === true
-	if (patch.allowedIps !== undefined) update.allowedIps = stringList(patch.allowedIps, "allowedIps")
+	if (patch.name !== undefined)
+		update.name = requireText(patch.name, "name", 120)
+	if (patch.status !== undefined)
+		update.status = asStatus(patch.status, token.status)
+	if (patch.quota !== undefined)
+		update.quota = quotaAmount(
+			optionalNumber(patch.quota, "quota", token.quota),
+		)
+	if (patch.unlimitedQuota !== undefined)
+		update.unlimitedQuota = patch.unlimitedQuota === true
+	if (patch.allowedIps !== undefined)
+		update.allowedIps = stringList(patch.allowedIps, "allowedIps")
 	if (patch.allowedModels !== undefined) {
 		update.allowedModels = stringList(patch.allowedModels, "allowedModels")
 	}
 	if (patch.expiresAt !== undefined) {
-		if (patch.expiresAt === null || patch.expiresAt === "") update.expiresAt = null
+		if (patch.expiresAt === null || patch.expiresAt === "")
+			update.expiresAt = null
 		else {
 			const parsed = new Date(String(patch.expiresAt))
 			if (Number.isNaN(parsed.getTime())) {
@@ -299,10 +387,14 @@ export async function deleteToken(id: string): Promise<void> {
  * plaintext once. The old key stops working as soon as the cache is dropped,
  * which happens before this function returns.
  */
-export async function rotateToken(id: string): Promise<{ token: TokenView; key: string }> {
+export async function rotateToken(
+	id: string,
+): Promise<{ token: TokenView; key: string }> {
 	const token = await getToken(id)
 	const generated = await generateApiKey()
-	await (await tokens()).updateOne(
+	await (
+		await tokens()
+	).updateOne(
 		{ _id: id },
 		{
 			$set: {
@@ -319,7 +411,10 @@ export async function rotateToken(id: string): Promise<{ token: TokenView; key: 
 }
 
 /** Used by the bootstrap script: proves a digest matches without storing one. */
-export async function digestFor(prefix: string, secret: string): Promise<string> {
+export async function digestFor(
+	prefix: string,
+	secret: string,
+): Promise<string> {
 	return await digestApiKey(prefix, secret)
 }
 
@@ -327,15 +422,25 @@ export async function digestFor(prefix: string, secret: string): Promise<string>
 // Channels
 // ---------------------------------------------------------------------------
 
-export type ChannelView = ChannelDoc & { keyCount: number; keyFingerprints: string[] }
+export type ChannelView = ChannelDoc & {
+	keyCount: number
+	keyFingerprints: string[]
+}
 
-export async function listChannels(options: ListOptions = {}): Promise<ChannelView[]> {
+export async function listChannels(
+	options: ListOptions = {},
+): Promise<ChannelView[]> {
 	const { limit, skip } = page(options)
-	const rows = await (await channels()).find({}, { sort: { priority: -1 }, limit, skip })
+	const rows = await (
+		await channels()
+	).find({}, { sort: { priority: -1 }, limit, skip })
 	const keyCollection = await channelKeys()
 	const views: ChannelView[] = []
 	for (const channel of rows) {
-		const keys = await keyCollection.find({ channelId: channel._id }, { limit: 100 })
+		const keys = await keyCollection.find(
+			{ channelId: channel._id },
+			{ limit: 100 },
+		)
 		views.push({
 			...channel,
 			keyCount: keys.filter((key) => key.status === "enabled").length,
@@ -364,7 +469,11 @@ function asMapping(value: unknown): Record<string, string> {
 	}
 	const out: Record<string, string> = {}
 	for (const [from, to] of Object.entries(value as Record<string, unknown>)) {
-		out[requireText(from, "modelMapping key", 200)] = requireText(to, "modelMapping value", 200)
+		out[requireText(from, "modelMapping key", 200)] = requireText(
+			to,
+			"modelMapping value",
+			200,
+		)
 	}
 	return out
 }
@@ -375,16 +484,34 @@ function asHeaders(value: unknown): Record<string, string> {
 		throw invalidRequest("headers must be an object", "headers")
 	}
 	const out: Record<string, string> = {}
-	for (const [name, entry] of Object.entries(value as Record<string, unknown>)) {
+	for (const [name, entry] of Object.entries(
+		value as Record<string, unknown>,
+	)) {
 		const lower = requireText(name, "header name", 120).toLowerCase()
 		// The relay sets auth last so a channel header cannot override credentials,
 		// but there is no reason to accept one here either.
-		if (["authorization", "x-api-key", "x-goog-api-key", "api-key", "mj-api-secret",
-			"cookie", "set-cookie", "proxy-authorization"].includes(lower)) {
-			throw invalidRequest("credential headers are managed by the gateway", "headers")
+		if (
+			[
+				"authorization",
+				"x-api-key",
+				"x-goog-api-key",
+				"api-key",
+				"mj-api-secret",
+				"cookie",
+				"set-cookie",
+				"proxy-authorization",
+			].includes(lower)
+		) {
+			throw invalidRequest(
+				"credential headers are managed by the gateway",
+				"headers",
+			)
 		}
 		try {
-			out[assertSafeHeaderName(lower)] = assertSafeHeaderValue(lower, requireText(entry, "header value", 1000))
+			out[assertSafeHeaderName(lower)] = assertSafeHeaderValue(
+				lower,
+				requireText(entry, "header value", 1000),
+			)
 		} catch {
 			throw invalidRequest("invalid channel header", "headers")
 		}
@@ -394,22 +521,34 @@ function asHeaders(value: unknown): Record<string, string> {
 
 function channelConfig(value: unknown): Record<string, unknown> {
 	if (value === undefined || value === null) return {}
-	if (!isPlainObject(value)) throw invalidRequest("config must be an object", "config")
+	if (!isPlainObject(value))
+		throw invalidRequest("config must be an object", "config")
 	const config = sanitizeParsed(value)
 	if (config.submitPaths !== undefined) {
 		const paths = stringList(config.submitPaths, "submitPaths")
-		if (paths.some((path) => !/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(path))) {
-			throw invalidRequest("submitPaths must contain exact, unencoded local paths")
+		if (
+			paths.some(
+				(path) => !/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(path),
+			)
+		) {
+			throw invalidRequest(
+				"submitPaths must contain exact, unencoded local paths",
+			)
 		}
 		config.submitPaths = paths
 	}
 	return config
 }
 
-async function sealKeysFor(channelId: string, secrets: string[]): Promise<ChannelKeyDoc[]> {
+async function sealKeysFor(
+	channelId: string,
+	secrets: string[],
+): Promise<ChannelKeyDoc[]> {
 	const master = config.channelKeyMaster
 	if (!master) {
-		throw invalidRequest("CHANNEL_KEY_MASTER is not configured, so keys cannot be sealed")
+		throw invalidRequest(
+			"CHANNEL_KEY_MASTER is not configured, so keys cannot be sealed",
+		)
 	}
 	const docs: ChannelKeyDoc[] = []
 	let index = 0
@@ -434,9 +573,12 @@ async function sealKeysFor(channelId: string, secrets: string[]): Promise<Channe
 	return docs
 }
 
-export async function createChannel(input: Record<string, unknown>): Promise<ChannelView> {
+export async function createChannel(
+	input: Record<string, unknown>,
+): Promise<ChannelView> {
 	const secrets = stringList(input.keys, "keys")
-	if (secrets.length === 0) throw invalidRequest("at least one key is required", "keys")
+	if (secrets.length === 0)
+		throw invalidRequest("at least one key is required", "keys")
 
 	const now = new Date()
 	const id = randomHex(12)
@@ -483,22 +625,34 @@ export async function updateChannel(
 	const channel = await getChannel(id)
 	const update: Record<string, unknown> = { updatedAt: new Date() }
 
-	if (patch.name !== undefined) update.name = requireText(patch.name, "name", 120)
-	if (patch.baseUrl !== undefined) update.baseUrl = requireText(patch.baseUrl, "baseUrl", 500)
-	if (patch.status !== undefined) update.status = asStatus(patch.status, channel.status)
+	if (patch.name !== undefined)
+		update.name = requireText(patch.name, "name", 120)
+	if (patch.baseUrl !== undefined)
+		update.baseUrl = requireText(patch.baseUrl, "baseUrl", 500)
+	if (patch.status !== undefined)
+		update.status = asStatus(patch.status, channel.status)
 	if (patch.priority !== undefined) {
-		update.priority = optionalNumber(patch.priority, "priority", channel.priority)
+		update.priority = optionalNumber(
+			patch.priority,
+			"priority",
+			channel.priority,
+		)
 	}
 	if (patch.weight !== undefined) {
 		update.weight = optionalNumber(patch.weight, "weight", channel.weight)
 	}
-	if (patch.groups !== undefined) update.groups = stringList(patch.groups, "groups")
-	if (patch.models !== undefined) update.models = stringList(patch.models, "models")
-	if (patch.modelMapping !== undefined) update.modelMapping = asMapping(patch.modelMapping)
+	if (patch.groups !== undefined)
+		update.groups = stringList(patch.groups, "groups")
+	if (patch.models !== undefined)
+		update.models = stringList(patch.models, "models")
+	if (patch.modelMapping !== undefined)
+		update.modelMapping = asMapping(patch.modelMapping)
 	if (patch.headers !== undefined) update.headers = asHeaders(patch.headers)
 	if (patch.config !== undefined) update.config = channelConfig(patch.config)
-	if (patch.testModel !== undefined) update.testModel = String(patch.testModel).slice(0, 200)
-	if (patch.rpmLimit !== undefined) update.rpmLimit = optionalNumber(patch.rpmLimit, "rpmLimit", 0)
+	if (patch.testModel !== undefined)
+		update.testModel = String(patch.testModel).slice(0, 200)
+	if (patch.rpmLimit !== undefined)
+		update.rpmLimit = optionalNumber(patch.rpmLimit, "rpmLimit", 0)
 
 	// Re-enabling a channel clears the breaker, otherwise the operator's fix
 	// would appear to do nothing until the failure count decayed.
@@ -513,9 +667,13 @@ export async function updateChannel(
 	return await getChannel(id)
 }
 
-export async function replaceChannelKeys(id: string, secrets: string[]): Promise<number> {
+export async function replaceChannelKeys(
+	id: string,
+	secrets: string[],
+): Promise<number> {
 	await getChannel(id)
-	if (secrets.length === 0) throw invalidRequest("at least one key is required", "keys")
+	if (secrets.length === 0)
+		throw invalidRequest("at least one key is required", "keys")
 	const sealed = await sealKeysFor(id, secrets)
 	const collection = await channelKeys()
 	await collection.deleteMany({ channelId: id })

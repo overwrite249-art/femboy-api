@@ -15,6 +15,8 @@
 import { config } from "../config/env.ts"
 import {
 	auditLogs,
+	channels,
+	tokens,
 	groupRatios,
 	modelMappings,
 	modelPricing,
@@ -40,7 +42,11 @@ import { invalidRequest, notFound } from "../http/errors.ts"
 import { K } from "../redis/keys.ts"
 import { redisDel, redisGetJson, redisSetJson } from "../redis/client.ts"
 import { invalidateAbilities } from "../routing/abilities.ts"
-import { PRICING_VERSION, normalizeModelName, quotaToUsd } from "../pricing/index.ts"
+import {
+	PRICING_VERSION,
+	normalizeModelName,
+	quotaToUsd,
+} from "../pricing/index.ts"
 import { randomAlphanumeric, randomHex, sha256Hex } from "../util/crypto.ts"
 import { monthBucket } from "../util/time.ts"
 import { enforceAttemptLimit } from "../ratelimit/index.ts"
@@ -60,7 +66,8 @@ function optionalPositive(value: unknown, field: string): number | undefined {
 }
 
 function name(value: unknown, field: string, max = 200): string {
-	if (typeof value !== "string" || !value.trim()) throw invalidRequest(`${field} is required`, field)
+	if (typeof value !== "string" || !value.trim())
+		throw invalidRequest(`${field} is required`, field)
 	if (value.length > max) throw invalidRequest(`${field} is too long`, field)
 	return value.trim()
 }
@@ -85,7 +92,9 @@ export async function listPricing(): Promise<ModelPricingDoc[]> {
 	return await (await modelPricing()).find({}, { limit: 500 })
 }
 
-export async function upsertPricing(input: Record<string, unknown>): Promise<ModelPricingDoc> {
+export async function upsertPricing(
+	input: Record<string, unknown>,
+): Promise<ModelPricingDoc> {
 	const model = name(input.model ?? input._id, "model")
 	const doc: Record<string, unknown> = {
 		modelRatio: positive(input.modelRatio, "modelRatio"),
@@ -125,7 +134,9 @@ export async function listMappings(): Promise<ModelMappingDoc[]> {
 	return await (await modelMappings()).find({}, { limit: 500 })
 }
 
-export async function upsertMapping(input: Record<string, unknown>): Promise<ModelMappingDoc> {
+export async function upsertMapping(
+	input: Record<string, unknown>,
+): Promise<ModelMappingDoc> {
 	const from = name(input.from, "from")
 	const to = name(input.to, "to")
 	const channelId =
@@ -154,11 +165,14 @@ export async function listGroupRatios(): Promise<GroupRatioDoc[]> {
 	return await (await groupRatios()).find({}, { limit: 200 })
 }
 
-export async function upsertGroupRatio(input: Record<string, unknown>): Promise<GroupRatioDoc> {
+export async function upsertGroupRatio(
+	input: Record<string, unknown>,
+): Promise<GroupRatioDoc> {
 	const group = name(input.group ?? input._id, "group", 64)
 	const ratio = positive(input.ratio, "ratio")
 	const doc: GroupRatioDoc = { _id: group, ratio, updatedAt: new Date() }
-	if (typeof input.description === "string") doc.description = input.description.slice(0, 500)
+	if (typeof input.description === "string")
+		doc.description = input.description.slice(0, 500)
 	await (await groupRatios()).updateOne({ _id: group }, { $set: doc }, true)
 	return doc
 }
@@ -238,28 +252,43 @@ export async function redeemCode(
 		.replace(/[^A-Z0-9]/g, "")
 
 	const attemptKey = K.redeemAttempts(userId)
-	await enforceAttemptLimit(attemptKey, MAX_REDEEM_ATTEMPTS, 3600,
-		"too many redemption attempts, try again later")
+	await enforceAttemptLimit(
+		attemptKey,
+		MAX_REDEEM_ATTEMPTS,
+		3600,
+		"too many redemption attempts, try again later",
+	)
 
 	const digest = await codeDigestFor(code)
 	return (await getDb()).transaction(async (db) => {
 		const account = db.collection<UserDoc>(COLLECTIONS.users)
 		const user = await account.findOne({ _id: userId, status: "enabled" })
 		if (!user || user.quotaLedgerVersion !== QUOTA_LEDGER_VERSION) {
-			throw invalidRequest("this account must be active and its quota ledger upgraded")
+			throw invalidRequest(
+				"this account must be active and its quota ledger upgraded",
+			)
 		}
-		const claimed = await db.collection<RedemptionCodeDoc>(COLLECTIONS.redemptionCodes).findOneAndUpdate(
-			{
-				codeDigest: digest, status: "unused",
-				$or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: new Date() } }],
-			},
-			{ $set: { status: "used", usedBy: userId, usedAt: new Date() } },
-		)
+		const claimed = await db
+			.collection<RedemptionCodeDoc>(COLLECTIONS.redemptionCodes)
+			.findOneAndUpdate(
+				{
+					codeDigest: digest,
+					status: "unused",
+					$or: [
+						{ expiresAt: { $exists: false } },
+						{ expiresAt: null },
+						{ expiresAt: { $gt: new Date() } },
+					],
+				},
+				{ $set: { status: "used", usedBy: userId, usedAt: new Date() } },
+			)
 		if (!claimed) throw invalidRequest("that code is not valid", "code")
 		const credit = quotaAmount(claimed.quota)
-		if (!Number.isSafeInteger(user.quota + credit)) throw invalidRequest("account balance is too large")
+		if (!Number.isSafeInteger(user.quota + credit))
+			throw invalidRequest("account balance is too large")
 		const updated = await account.findOneAndUpdate(
-			{ _id: userId }, { $inc: { quota: credit }, $set: { updatedAt: new Date() } },
+			{ _id: userId },
+			{ $inc: { quota: credit }, $set: { updatedAt: new Date() } },
 		)
 		if (!updated) throw invalidRequest("account not found")
 		// Claim and credit commit together. Never drop/reseed a hot balance.
@@ -278,14 +307,18 @@ export async function getSetting<T>(key: string, fallback: T): Promise<T> {
 }
 
 export async function setSetting(key: string, value: unknown): Promise<void> {
-	await (await settings()).updateOne(
+	await (
+		await settings()
+	).updateOne(
 		{ _id: name(key, "key", 120) },
 		{ $set: { value, updatedAt: new Date() } },
 		true,
 	)
 }
 
-export async function listSettings(): Promise<Array<{ key: string; value: unknown }>> {
+export async function listSettings(): Promise<
+	Array<{ key: string; value: unknown }>
+> {
 	const rows = await (await settings()).find({}, { limit: 200 })
 	return rows.map((row) => ({ key: row._id, value: row.value }))
 }
@@ -310,7 +343,9 @@ export type UsageSummary = {
  * pipeline, so the arithmetic happens in process -- which is fine, because the
  * rollups are already one row per scope per hour.
  */
-export async function usageSummary(bucketPrefix = monthBucket()): Promise<UsageSummary> {
+export async function usageSummary(
+	bucketPrefix = monthBucket(),
+): Promise<UsageSummary> {
 	const rows = await (await usageRollups()).find({}, { limit: 5000 })
 	const summary: UsageSummary = {
 		bucketPrefix,
@@ -360,9 +395,17 @@ export type UsageQuery = {
 	bucket?: string
 }
 
-export async function listUsage(query: UsageQuery = {}): Promise<UsageLogDoc[]> {
+export async function listUsage(
+	query: UsageQuery = {},
+): Promise<UsageLogDoc[]> {
 	const filter: Record<string, unknown> = {}
-	for (const field of ["userId", "tokenId", "channelId", "model", "status"] as const) {
+	for (const field of [
+		"userId",
+		"tokenId",
+		"channelId",
+		"model",
+		"status",
+	] as const) {
 		const value = query[field]
 		if (value) filter[field] = value
 	}
@@ -377,16 +420,37 @@ export async function listAudit(
 ): Promise<AuditLogDoc[]> {
 	const limit = Math.min(Math.max(Math.floor(options.limit ?? 50), 1), 200)
 	const skip = Math.max(Math.floor(options.skip ?? 0), 0)
-	return await (await auditLogs()).find({}, { sort: { createdAt: -1 }, limit, skip })
+	return await (
+		await auditLogs()
+	).find({}, { sort: { createdAt: -1 }, limit, skip })
 }
 
 /** Everything the console's overview screen needs, in one round trip. */
 export async function consoleOverview(): Promise<Record<string, unknown>> {
-	const summary = await usageSummary()
+	const [summary, channelCount, enabledChannels, tokenCount, userCount] =
+		await Promise.all([
+			usageSummary(),
+			channels().then((collection) => collection.countDocuments({})),
+			channels().then((collection) =>
+				collection.countDocuments({
+					status: "enabled",
+					autoDisabled: { $ne: true },
+				}),
+			),
+			tokens().then((collection) => collection.countDocuments({})),
+			users().then((collection) => collection.countDocuments({})),
+		])
 	return {
 		summary,
 		siteName: config.siteName,
 		quotaPerUnit: config.quotaPerUnit,
 		month: monthBucket(),
+		inventory: {
+			channels: channelCount,
+			enabledChannels,
+			tokens: tokenCount,
+			users: userCount,
+		},
+		coordination: config.coordinationBackend,
 	}
 }
