@@ -258,7 +258,12 @@ export default function UsagePage() {
 						) : null}
 					</Empty>
 				) : (
-					<div className="table-wrap">
+					<div
+						className="table-wrap"
+						role="region"
+						tabIndex={0}
+						aria-label="Usage table, scroll for more columns"
+					>
 						<table>
 							<thead>
 								<tr>

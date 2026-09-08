@@ -121,7 +121,12 @@ export default function AuditPage() {
 				{list.loading && !list.data ? (
 					<Loading />
 				) : rows.length ? (
-					<div className="table-wrap">
+					<div
+						className="table-wrap"
+						role="region"
+						tabIndex={0}
+						aria-label="Audit table, scroll for more columns"
+					>
 						<table>
 							<thead>
 								<tr>

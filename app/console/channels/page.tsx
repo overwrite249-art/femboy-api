@@ -347,7 +347,12 @@ export default function ChannelsPage() {
 							)}
 						</Empty>
 					) : (
-						<div className="table-wrap">
+						<div
+							className="table-wrap"
+							role="region"
+							tabIndex={0}
+							aria-label="Channels table, scroll for more columns"
+						>
 							<table>
 								<thead>
 									<tr>

@@ -127,7 +127,12 @@ export default function SettingsPage() {
 							</p>
 						</Empty>
 					) : (
-						<div className="table-wrap">
+						<div
+							className="table-wrap"
+							role="region"
+							tabIndex={0}
+							aria-label="Settings table, scroll for more columns"
+						>
 							<table>
 								<thead>
 									<tr>

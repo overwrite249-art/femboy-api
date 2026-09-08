@@ -321,7 +321,12 @@ export default function TokensPage() {
 							)}
 						</Empty>
 					) : (
-						<div className="table-wrap">
+						<div
+							className="table-wrap"
+							role="region"
+							tabIndex={0}
+							aria-label="Tokens table, scroll for more columns"
+						>
 							<table>
 								<thead>
 									<tr>

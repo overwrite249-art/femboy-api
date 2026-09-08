@@ -2106,6 +2106,10 @@ input[type="range"] {
 .public-footer a {
 	color: var(--accent);
 }
+.public-footer .brand-api,
+.public-footer .brand-sub {
+	opacity: 1;
+}
 .auth-shell {
 	min-height: 100dvh;
 	display: grid;
@@ -2963,4 +2967,33 @@ input[type="range"] {
 }
 .panel-body > .empty:not(:has(.empty-icon)) {
 	min-height: 112px;
+}
+/* Keep offscreen table labels inside their scrolling region. */
+.sr-only {
+	top: 0;
+	left: 0;
+}
+.table-wrap,
+.panel-body {
+	position: relative;
+	max-width: 100%;
+}
+.table-wrap > table {
+	min-width: 760px;
+}
+.table-wrap td:first-child {
+	min-width: 160px;
+}
+@media (max-width: 760px) {
+	.table-wrap::before {
+		content: "Scroll horizontally to view all columns →";
+		display: block;
+		position: sticky;
+		left: 0;
+		padding: 12px 16px;
+		font-size: 14px;
+		color: var(--muted);
+		background: var(--soft);
+		border-bottom: 1px solid var(--border);
+	}
 }
