@@ -34,6 +34,9 @@ export default function LandingPage() {
 				<Link className="btn" href="/login">
 					Sign in
 				</Link>
+				<Link className="btn" href="/setup">
+					Deployment setup
+				</Link>
 				<a
 					className="btn"
 					href="https://github.com/overwrite249-art/femboy-api"

@@ -15,6 +15,7 @@ const NAV: NavEntry[] = [
 	{ href: "/console/channels", label: "Channels", group: "Operate" },
 	{ href: "/console/usage", label: "Usage", group: "Operate" },
 	{ href: "/console/audit", label: "Audit log", group: "Operate" },
+	{ href: "/console/setup", label: "Setup", group: "Operate" },
 	{ href: "/console/tokens", label: "Tokens", group: "Access" },
 	{ href: "/console/users", label: "Users", group: "Access" },
 	{ href: "/console/redemption", label: "Redemption", group: "Access" },

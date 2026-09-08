@@ -108,10 +108,20 @@ vercel --prod
 
 Set all required storage and secret variables in the Vercel dashboard. Back up
 and migrate existing balances before routing traffic to this release. Do not
-run old and new accounting code concurrently. `vercel.json` already declares
-the eight cron jobs the gateway needs (health checks, usage flushing, task
-polling, quota reconciliation, rollups, pricing refresh, token expiry and
-partition maintenance).
+run old and new accounting code concurrently.
+
+**Finish scheduler setup after deployment.** Open `/setup` for instructions,
+then sign in as root and open **Console → Setup**. You must get a
+**cron-job.org API key** from [its console](https://console.cron-job.org) under
+**Settings**. The app uses it once to configure the eight maintenance jobs and
+does not retain the management key. Set a stable HTTPS `PUBLIC_BASE_URL` and a
+strong `CRON_SECRET` first.
+
+Native Vercel cron jobs are not installed, so this configuration works within
+Vercel Hobby's daily-cron limitation without upgrading the plan. See
+[scheduler setup and recovery](docs/SCHEDULER-SETUP.md) for schedules, access
+requirements, timeout checks and secret rotation. Verify execution in the
+external scheduler's history before accepting traffic.
 
 > **Note.** The relay runs on the Node runtime rather than Edge. The MongoDB
 > driver needs a TCP socket, which Edge does not provide. The hot path still

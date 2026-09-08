@@ -83,6 +83,30 @@ h4 {
 	outline-offset: 2px;
 }
 
+/* Setup reuses the console's typography and surfaces. */
+.setup-content { max-width: 840px; }
+.setup-intro, .setup-copy { margin: 0 0 24px; max-width: 70ch; }
+.setup-content > .callout, .setup-content > [role="status"] { margin-bottom: 24px; }
+.setup-steps { margin: 0; padding-left: 24px; }
+.setup-steps li + li { margin-top: 16px; }
+.setup-form { display: grid; gap: 16px; }
+.setup-form .btn { justify-self: start; min-height: 44px; }
+.setup-form input { min-height: 44px; }
+.setup-form p { margin: 0; }
+.setup-origin { overflow-wrap: anywhere; }
+.setup-jobs { display: grid; }
+.setup-job { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--border-soft); }
+.setup-job code { flex-shrink: 0; color: var(--text-2); }
+.setup-guide { max-width: 840px; }
+.setup-guide-steps { padding-left: 24px; margin: 32px 0; }
+.setup-guide-steps li { padding-left: 8px; margin-bottom: 32px; }
+.setup-guide-steps h2 { font-size: 24px; }
+.setup-guide-steps p { margin: 12px 0 0; }
+@media (max-width: 480px) {
+	.setup-job { align-items: flex-start; flex-direction: column; gap: 8px; }
+	.setup-form .btn { width: 100%; }
+}
+
 /* ------------------------------------------------------------------ shell */
 
 .shell {
