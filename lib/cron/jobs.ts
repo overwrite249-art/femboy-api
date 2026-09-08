@@ -15,6 +15,7 @@ import {
 	tokens,
 	usageRollups,
 	users,
+	quotaJournal,
 } from "../db/index.ts"
 import { ensureIndexes } from "../db/indexes.ts"
 import { flushUsageBuffer, pendingUsageCount } from "../usage/index.ts"
@@ -26,6 +27,8 @@ import { upstreamFetch } from "../upstream/fetch.ts"
 import { buildUpstreamHeaders } from "../http/headers.ts"
 import { dialectFor, providerAuthHeaders, transformRequest, upstreamUrlFor } from "../transform/index.ts"
 import { monthBucket } from "../util/time.ts"
+import { flushQuotaSettlements } from "../quota/index.ts"
+import { invalidateTokenCache } from "../auth/authenticate.ts"
 
 /**
  * Moves buffered usage rows into MongoDB.
@@ -72,25 +75,14 @@ export async function rollupUsage(): Promise<Record<string, unknown>> {
  * themselves, are treated as the truth and the counter is corrected to match.
  */
 export async function reconcileQuota(): Promise<Record<string, unknown>> {
-	const rows = await (await usageRollups()).find({ scope: "user" })
-	const spentByUser = new Map<string, number>()
-	for (const row of rows) {
-		const key = String(row.key ?? "")
-		if (key === "") continue
-		spentByUser.set(key, (spentByUser.get(key) ?? 0) + (Number(row.quota) || 0))
-	}
-
-	const collection = await users()
-	const drifted: Array<{ userId: string; was: number; now: number }> = []
-	for (const [userId, spent] of spentByUser) {
-		const user = await collection.findOne({ _id: userId })
-		if (!user) continue
-		const recorded = Number(user.usedQuota) || 0
-		if (recorded === spent) continue
-		drifted.push({ userId, was: recorded, now: spent })
-		await collection.updateOne({ _id: userId }, { $set: { usedQuota: spent, updatedAt: new Date() } })
-	}
-	return { examined: spentByUser.size, corrected: drifted.length, drifted: drifted.slice(0, 25) }
+	const replayed = await flushQuotaSettlements(500)
+	const collection = await quotaJournal()
+	const filter = { state: "pending", expiresAt: { $lte: new Date() } }
+	const pendingReview = await collection.countDocuments(filter)
+	const holds = await collection.find(filter, { sort: { expiresAt: 1 }, limit: 25 })
+	// Money is never reconstructed from lossy analytics. Unknown abandoned
+	// work keeps its durable hold until an operator verifies the actual cost.
+	return { replayed, corrected: replayed, pendingReview, requestIds: holds.map((row) => row.requestId) }
 }
 
 /** Disables tokens whose expiry has passed. */
@@ -108,6 +100,7 @@ export async function expireTokens(): Promise<Record<string, unknown>> {
 			{ _id: token._id },
 			{ $set: { status: "disabled", updatedAt: new Date() } },
 		)
+		await invalidateTokenCache(token.keyPrefix)
 		expired++
 	}
 	return { examined: enabled.length, expired }
@@ -185,6 +178,7 @@ export async function healthCheck(): Promise<Record<string, unknown>> {
 				{ headerTimeoutMs: 10_000, maxBytes: 64 * 1024 },
 			)
 			const ok = response.ok
+			void response.body?.cancel().catch(() => {})
 			await recordChannelOutcome(channelId, ok)
 			results.push({ channelId, ok, detail: ok ? undefined : `status ${response.status}` })
 		} catch (error) {

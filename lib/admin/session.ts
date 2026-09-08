@@ -17,7 +17,7 @@
  * secret the matching token cannot be computed.
  */
 
-import { config, isProduction } from "../config/env.ts"
+import { config, isProduction, assertProductionReady } from "../config/env.ts"
 import type { UserDoc, UserRole } from "../db/types.ts"
 import { ErrorCode, GatewayError } from "../http/errors.ts"
 import {
@@ -28,10 +28,12 @@ import {
 	verifyToken,
 } from "../util/crypto.ts"
 import { nowSec } from "../util/time.ts"
+import { getDb, COLLECTIONS } from "../db/index.ts"
 
 export const SESSION_COOKIE = "fb_session"
 export const CSRF_COOKIE = "fb_csrf"
 export const CSRF_HEADER = "x-csrf-token"
+export const OAUTH_STATE_COOKIE = "fb_oauth_state"
 export const SESSION_TTL_SEC = 12 * 60 * 60
 
 export type SessionPayload = {
@@ -45,6 +47,7 @@ export type SessionPayload = {
 }
 
 function sessionSecret(): string {
+	assertProductionReady()
 	const secret = config.sessionSecret
 	if (!secret) {
 		// Fail closed. A blank secret would make every forged cookie valid.
@@ -100,15 +103,34 @@ export async function createSession(
 	}
 }
 
-/** Returns the session carried by this request, or null. Never throws on a bad cookie. */
+/** Bad cookies return null; unavailable revocation storage must fail closed. */
 export async function readSession(req: Request): Promise<SessionPayload | null> {
 	const raw = readCookie(req, SESSION_COOKIE)
-	if (!raw) return null
+	if (!raw || raw.length > 4096) return null
+	const secret = sessionSecret()
+	let payload: SessionPayload | null
 	try {
-		return await verifyToken<SessionPayload>(raw, sessionSecret())
+		payload = await verifyToken<SessionPayload>(raw, secret)
 	} catch {
 		return null
 	}
+	if (!payload || typeof payload.sub !== "string" || !/^[a-f0-9]{32}$/.test(payload.sid)) return null
+	try {
+		const revoked = await (await getDb()).collection(COLLECTIONS.sessionRevocations).findOne({ _id: payload.sid })
+		return revoked ? null : payload
+	} catch (cause) {
+		throw new GatewayError({
+			code: ErrorCode.SERVICE_UNAVAILABLE, status: 503,
+			message: "session verification is temporarily unavailable", cause,
+		})
+	}
+}
+
+/** Clearing a browser cookie alone would leave a copied session usable. */
+export async function revokeSession(session: SessionPayload): Promise<void> {
+	await (await getDb()).collection(COLLECTIONS.sessionRevocations).updateOne(
+		{ _id: session.sid }, { $set: { expiresAt: new Date(session.exp * 1000) } }, true,
+	)
 }
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
@@ -124,7 +146,16 @@ export async function assertCsrf(req: Request, session: SessionPayload): Promise
 	if (SAFE_METHODS.has(req.method.toUpperCase())) return
 
 	const origin = req.headers.get("origin")
-	if (origin && config.publicBaseUrl && !config.publicBaseUrl.startsWith(origin)) {
+	let sameOrigin = true
+	if (origin) {
+		try {
+			const parsed = new URL(origin)
+			sameOrigin = parsed.origin === origin && parsed.origin === new URL(config.publicBaseUrl).origin
+		} catch {
+			sameOrigin = false
+		}
+	}
+	if (!sameOrigin) {
 		throw new GatewayError({
 			code: ErrorCode.INSUFFICIENT_PERMISSIONS,
 			status: 403,
@@ -153,6 +184,11 @@ function cookie(name: string, value: string, maxAgeSec: number, httpOnly: boolea
 	if (httpOnly) parts.push("HttpOnly")
 	if (secureCookies()) parts.push("Secure")
 	return parts.join("; ")
+}
+
+/** A callback must arrive in the same browser that started this OAuth flow. */
+export function oauthStateCookie(state: string, ttlSec: number): string {
+	return cookie(OAUTH_STATE_COOKIE, state, ttlSec, true)
 }
 
 /**

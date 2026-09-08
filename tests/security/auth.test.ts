@@ -263,15 +263,15 @@ test("a channel pin is dropped for ordinary users", async () => {
 	assert.equal(effectiveDirectives(context).channelId, undefined)
 })
 
-test("revocation takes effect once the identity cache is invalidated", async () => {
+test("revocation takes effect even before the identity cache is invalidated", async () => {
 	const generated = await seed()
 	assert.equal((await authenticate(request(generated.key))).identity.userId, "u1")
 
 	const tokenCollection = await tokens()
 	await tokenCollection.updateOne({ _id: "t1" }, { $set: { status: "disabled" } })
 
-	// Still cached, so still accepted - this is the documented staleness window.
-	assert.equal((await authenticate(request(generated.key))).identity.userId, "u1")
+	// Cached digests do not cache authority; current key state is checked again.
+	await assert.rejects(() => authenticate(request(generated.key)))
 
 	await invalidateTokenCache(generated.prefix)
 	await assert.rejects(() => authenticate(request(generated.key)))

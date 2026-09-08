@@ -88,6 +88,11 @@ export type DnsResolver = (hostname: string) => Promise<string[]>
 export function isBlockedAddress(ip: string): boolean {
 	const bytes = ipToBytes(ip)
 	if (bytes === null) return true
+	// IPv4-mapped addresses are normalized by ipToBytes and checked as IPv4.
+	// Other IPv6 must be global unicast; this rejects obsolete transition and
+	// site-local/NAT64 ranges that a short private-range denylist misses.
+	if (bytes.length === 16 && !matchesAnyCidr(["2000::/3"], ip)) return true
+	if (bytes.length === 16 && matchesAnyCidr(["2001::/23", "3fff::/20"], ip)) return true
 	return matchesAnyCidr(bytes.length === 4 ? BLOCKED_V4_CIDRS : BLOCKED_V6_CIDRS, ip)
 }
 
@@ -158,27 +163,30 @@ function matchesDomain(hostname: string, pattern: string): boolean {
 async function resolveOverHttps(hostname: string): Promise<string[]> {
 	const endpoint = config.dohResolver
 	if (!endpoint) return []
-	const addresses: string[] = []
-	for (const type of ["A", "AAAA"]) {
+	const answers = await Promise.all(["A", "AAAA"].map(async (type) => {
 		try {
 			const url = `${endpoint}?name=${encodeURIComponent(hostname)}&type=${type}`
 			const res = await fetch(url, {
 				headers: { accept: "application/dns-json" },
 				signal: AbortSignal.timeout(3000),
 			})
-			if (!res.ok) continue
-			const body = (await res.json()) as { Answer?: Array<{ type?: number; data?: string }> }
+			if (!res.ok) return null
+			const body = (await res.json()) as { Status?: number; Answer?: Array<{ type?: number; data?: string }> }
+			if (body.Status !== 0) return null
+			const addresses: string[] = []
 			for (const answer of body.Answer ?? []) {
 				// 1 = A, 28 = AAAA. Anything else is a CNAME we do not follow here.
 				if ((answer.type === 1 || answer.type === 28) && typeof answer.data === "string") {
 					addresses.push(answer.data.trim())
 				}
 			}
+			return addresses
 		} catch {
-			// A resolver failure is handled by the caller's fail-closed policy.
+			return null
 		}
-	}
-	return addresses
+	}))
+	// NOERROR with no AAAA records is fine; failure to check AAAA is not.
+	return answers.some((answer) => answer === null) ? [] : answers.flatMap((answer) => answer ?? [])
 }
 
 let resolver: DnsResolver = resolveOverHttps
@@ -217,7 +225,7 @@ export async function assertUpstreamUrlAllowed(rawUrl: string): Promise<Resolved
 		throw ssrfBlocked("upstream url must not embed credentials")
 	}
 
-	const hostname = stripBrackets(url.hostname).toLowerCase()
+	const hostname = stripBrackets(url.hostname).toLowerCase().replace(/\.$/, "")
 	if (!hostname) throw ssrfBlocked("upstream url has no host")
 
 	const port = url.port ? Number(url.port) : scheme === "https:" ? 443 : 80
@@ -255,7 +263,8 @@ export async function assertUpstreamUrlAllowed(rawUrl: string): Promise<Resolved
 	const cacheKey = K.ssrfVerdict(hostname)
 	const cached = await redisGetJson<{ ok: boolean; addresses: string[] }>(cacheKey).catch(() => null)
 	if (cached) {
-		if (!cached.ok) throw ssrfBlocked("upstream address is not publicly routable")
+		if (!cached.ok || !Array.isArray(cached.addresses) || !cached.addresses.length ||
+			cached.addresses.some(isBlockedAddress)) throw ssrfBlocked("upstream address is not publicly routable")
 		return { url, hostname, addresses: cached.addresses }
 	}
 

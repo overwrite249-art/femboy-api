@@ -79,14 +79,16 @@ rules:
 
   - id: require-explicit-runtime
     languages: [generic]
-    severity: WARNING
+    severity: ERROR
     message: >
       Route handlers declare their runtime explicitly. The relay needs nodejs
       because the MongoDB driver needs TCP.
     paths:
       include:
-        - app/api/
-    pattern-regex: 'export const dynamic'
+        - app/api/**/route.ts
+    # Report a route only when its complete source lacks the Node declaration.
+    # The old rule matched `dynamic` even when the required runtime was present.
+    pattern-regex: '(?ms)\A(?!.*^export\s+const\s+runtime\s*=\s*["'']nodejs["'']).*\bexport\b'
 
   - id: no-math-random-for-secrets
     languages: [generic]

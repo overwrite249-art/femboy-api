@@ -29,6 +29,7 @@ import { tasks } from "../db/index.ts"
 import type { TaskDoc, TaskPlatform } from "../db/types.ts"
 import { notFound } from "../http/errors.ts"
 import { randomAlphanumeric, randomHex } from "../util/crypto.ts"
+import { sanitizeParsed } from "../util/json.ts"
 
 /** The narrow slice of an identity that ownership needs. */
 export type TaskActor = { userId: string; role: string }
@@ -63,6 +64,7 @@ export async function createTask(input: {
 	userId: string
 	tokenId: string
 	channelId: string
+	channelKeyId?: string
 	model: string
 	quota: number
 	properties?: Record<string, unknown>
@@ -76,6 +78,7 @@ export async function createTask(input: {
 		userId: input.userId,
 		tokenId: input.tokenId,
 		channelId: input.channelId,
+		...(input.channelKeyId ? { channelKeyId: input.channelKeyId } : {}),
 		model: input.model,
 		status: "pending",
 		progress: "0%",
@@ -97,9 +100,10 @@ export async function findTask(taskId: string): Promise<TaskDoc | null> {
 }
 
 export async function requireTask(taskId: string, actor: TaskActor): Promise<TaskDoc> {
-	const doc = await findTask(taskId)
+	if (!/^task-[A-Za-z0-9]{28}$/.test(taskId)) throw notFound("no such task")
+	const elevated = actor.role === "admin" || actor.role === "root"
+	const doc = await (await tasks()).findOne({ taskId, ...(elevated ? {} : { userId: actor.userId }) })
 	if (!doc) throw notFound("no such task")
-	if (actor.role === "user" && doc.userId !== actor.userId) throw notFound("no such task")
 	return doc
 }
 
@@ -108,7 +112,8 @@ export async function listTasks(
 	options: { limit?: number; skip?: number } = {},
 ): Promise<TaskDoc[]> {
 	const limit = Math.min(Math.max(1, options.limit ?? 50), 200)
-	const filter: Record<string, unknown> = actor.role === "user" ? { userId: actor.userId } : {}
+	const elevated = actor.role === "admin" || actor.role === "root"
+	const filter: Record<string, unknown> = elevated ? {} : { userId: actor.userId }
 	return await (await tasks()).find(filter, {
 		sort: { submitTime: -1 },
 		limit,
@@ -138,22 +143,15 @@ export async function markSubmitted(taskId: string, upstreamTaskId: string): Pro
  * change nothing about the result.
  */
 export async function dueTasks(limit = 50): Promise<TaskDoc[]> {
-	const rows = await (await tasks()).find({}, { sort: { submitTime: 1 }, limit: SCAN_LIMIT })
-	const now = Date.now()
-	const due: TaskDoc[] = []
-	for (const row of rows) {
-		if (isTerminal(row.status)) continue
-		const at = row.nextPollAt ? new Date(row.nextPollAt).getTime() : 0
-		if (at > now) continue
-		due.push(row)
-		if (due.length >= limit) break
-	}
-	return due
+	return (await tasks()).find({
+		status: { $nin: TERMINAL_STATUSES },
+		$or: [{ nextPollAt: { $exists: false } }, { nextPollAt: null }, { nextPollAt: { $lte: new Date() } }],
+	}, { sort: { nextPollAt: 1, submitTime: 1 }, limit: Math.max(1, Math.min(SCAN_LIMIT, Math.trunc(limit))) })
 }
 
 export function isExpired(doc: TaskDoc, now = Date.now()): boolean {
-	if (doc.pollCount > MAX_POLL_COUNT) return true
-	return now - new Date(doc.submitTime).getTime() > TASK_MAX_AGE_MS
+	if (doc.pollCount >= MAX_POLL_COUNT) return true
+	return now - new Date(doc.submitTime).getTime() >= TASK_MAX_AGE_MS
 }
 
 /** The client-facing view. Deliberately omits every internal identifier. */
@@ -170,7 +168,7 @@ export function publicTask(doc: TaskDoc): Record<string, unknown> {
 		submitTime: new Date(doc.submitTime).toISOString(),
 		startTime: doc.startTime ? new Date(doc.startTime).toISOString() : null,
 		finishTime: doc.finishTime ? new Date(doc.finishTime).toISOString() : null,
-		result: doc.result ?? null,
+		result: rewriteTaskId(doc.result ?? null, doc.upstreamTaskId ?? "", doc.taskId),
 		failReason: doc.failReason ?? null,
 	}
 }
@@ -232,8 +230,10 @@ export function extractUpstreamTaskId(value: unknown, depth = 0): string {
  * of known field names.
  */
 export function rewriteTaskId(value: unknown, from: string, to: string, depth = 0): unknown {
-	if (!from || depth > 5) return value
+	if (depth === 0) value = sanitizeParsed(value)
+	if (!from) return value
 	if (typeof value === "string") return value === from ? to : value
+	if (typeof value === "number") return String(value) === from ? to : value
 	if (Array.isArray(value)) return value.map((item) => rewriteTaskId(item, from, to, depth + 1))
 	if (value && typeof value === "object") {
 		const out: Record<string, unknown> = {}

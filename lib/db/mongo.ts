@@ -11,6 +11,7 @@
  */
 
 import { config } from "../config/env.ts"
+import { ensureIndexes } from "./indexes.ts"
 import {
 	DuplicateKeyError,
 	type BulkWriteOp,
@@ -29,16 +30,16 @@ type AnyRecord = Record<string, unknown>
 type DriverCollection = {
 	findOne(filter: AnyRecord, options?: AnyRecord): Promise<AnyRecord | null>
 	find(filter: AnyRecord, options?: AnyRecord): { toArray(): Promise<AnyRecord[]> }
-	countDocuments(filter?: AnyRecord): Promise<number>
-	insertOne(doc: AnyRecord): Promise<unknown>
+	countDocuments(filter?: AnyRecord, options?: AnyRecord): Promise<number>
+	insertOne(doc: AnyRecord, options?: AnyRecord): Promise<unknown>
 	insertMany(docs: AnyRecord[], options?: AnyRecord): Promise<{ insertedCount: number }>
 	updateOne(filter: AnyRecord, update: AnyRecord, options?: AnyRecord): Promise<AnyRecord>
 	updateMany(filter: AnyRecord, update: AnyRecord, options?: AnyRecord): Promise<AnyRecord>
 	findOneAndUpdate(filter: AnyRecord, update: AnyRecord, options?: AnyRecord): Promise<AnyRecord | null>
-	deleteOne(filter: AnyRecord): Promise<{ deletedCount?: number }>
-	deleteMany(filter: AnyRecord): Promise<{ deletedCount?: number }>
+	deleteOne(filter: AnyRecord, options?: AnyRecord): Promise<{ deletedCount?: number }>
+	deleteMany(filter: AnyRecord, options?: AnyRecord): Promise<{ deletedCount?: number }>
 	bulkWrite(ops: unknown[], options?: AnyRecord): Promise<unknown>
-	distinct(field: string, filter?: AnyRecord): Promise<unknown[]>
+	distinct(field: string, filter?: AnyRecord, options?: AnyRecord): Promise<unknown[]>
 	createIndexes(specs: unknown[]): Promise<unknown>
 	drop(): Promise<unknown>
 }
@@ -53,6 +54,12 @@ type DriverClient = {
 	db(name: string): DriverDb
 	connect(): Promise<unknown>
 	close(): Promise<void>
+	startSession(): DriverSession
+}
+
+type DriverSession = {
+	withTransaction<T>(work: () => Promise<T>, options?: AnyRecord): Promise<T>
+	endSession(): Promise<void>
 }
 
 function wrapDuplicate(error: unknown): never {
@@ -64,28 +71,34 @@ function wrapDuplicate(error: unknown): never {
 
 class MongoCollection<T extends { _id: string }> implements Collection<T> {
 	private raw: DriverCollection
+	private session?: DriverSession
 
-	constructor(raw: DriverCollection) {
+	constructor(raw: DriverCollection, session?: DriverSession) {
 		this.raw = raw
+		this.session = session
+	}
+
+	private options(options: AnyRecord = {}): AnyRecord {
+		return this.session ? { ...options, session: this.session } : options
 	}
 
 	async findOne(filter: Filter, options: FindOptions = {}): Promise<T | null> {
-		const doc = await this.raw.findOne(filter, toDriverOptions(options))
+		const doc = await this.raw.findOne(filter, this.options(toDriverOptions(options)))
 		return (doc as T) ?? null
 	}
 
 	async find(filter: Filter, options: FindOptions = {}): Promise<T[]> {
-		const docs = await this.raw.find(filter, toDriverOptions(options)).toArray()
+		const docs = await this.raw.find(filter, this.options(toDriverOptions(options))).toArray()
 		return docs as T[]
 	}
 
 	async countDocuments(filter: Filter = {}): Promise<number> {
-		return this.raw.countDocuments(filter)
+		return this.raw.countDocuments(filter, this.options())
 	}
 
 	async insertOne(doc: T): Promise<void> {
 		try {
-			await this.raw.insertOne(doc as unknown as AnyRecord)
+			await this.raw.insertOne(doc as unknown as AnyRecord, this.options())
 		} catch (error) {
 			wrapDuplicate(error)
 		}
@@ -94,7 +107,7 @@ class MongoCollection<T extends { _id: string }> implements Collection<T> {
 	async insertMany(docs: T[], ordered = true): Promise<number> {
 		if (docs.length === 0) return 0
 		try {
-			const res = await this.raw.insertMany(docs as unknown as AnyRecord[], { ordered })
+			const res = await this.raw.insertMany(docs as unknown as AnyRecord[], this.options({ ordered }))
 			return res.insertedCount ?? docs.length
 		} catch (error) {
 			if (!ordered && DuplicateKeyError.is(error)) {
@@ -107,7 +120,7 @@ class MongoCollection<T extends { _id: string }> implements Collection<T> {
 
 	async updateOne(filter: Filter, update: UpdateSpec, upsert = false): Promise<UpdateResult> {
 		try {
-			const res = (await this.raw.updateOne(filter, update, { upsert })) as {
+			const res = (await this.raw.updateOne(filter, update, this.options({ upsert }))) as {
 				matchedCount?: number
 				modifiedCount?: number
 				upsertedId?: unknown
@@ -123,7 +136,7 @@ class MongoCollection<T extends { _id: string }> implements Collection<T> {
 	}
 
 	async updateMany(filter: Filter, update: UpdateSpec): Promise<UpdateResult> {
-		const res = (await this.raw.updateMany(filter, update)) as {
+		const res = (await this.raw.updateMany(filter, update, this.options())) as {
 			matchedCount?: number
 			modifiedCount?: number
 		}
@@ -142,11 +155,11 @@ class MongoCollection<T extends { _id: string }> implements Collection<T> {
 		try {
 			// `returnDocument: "after"` is what makes the guarded decrement usable
 			// as a compare-and-swap: the caller sees the post-image or null.
-			const doc = await this.raw.findOneAndUpdate(filter, update, {
+			const doc = await this.raw.findOneAndUpdate(filter, update, this.options({
 				upsert: options.upsert ?? false,
 				returnDocument: "after",
 				includeResultMetadata: false,
-			})
+			}))
 			return (doc as T) ?? null
 		} catch (error) {
 			return wrapDuplicate(error)
@@ -154,35 +167,35 @@ class MongoCollection<T extends { _id: string }> implements Collection<T> {
 	}
 
 	async deleteOne(filter: Filter): Promise<number> {
-		const res = await this.raw.deleteOne(filter)
+		const res = await this.raw.deleteOne(filter, this.options())
 		return res.deletedCount ?? 0
 	}
 
 	async deleteMany(filter: Filter): Promise<number> {
-		const res = await this.raw.deleteMany(filter)
+		const res = await this.raw.deleteMany(filter, this.options())
 		return res.deletedCount ?? 0
 	}
 
 	async bulkWrite(ops: Array<BulkWriteOp<T>>, ordered = false): Promise<void> {
 		if (ops.length === 0) return
-		await this.raw.bulkWrite(ops as unknown[], { ordered })
+		await this.raw.bulkWrite(ops as unknown[], this.options({ ordered }))
 	}
 
 	async distinct(field: string, filter: Filter = {}): Promise<unknown[]> {
-		return this.raw.distinct(field, filter)
+		return this.raw.distinct(field, filter, this.options())
 	}
 
 	async createIndexes(specs: IndexSpec[]): Promise<void> {
 		if (specs.length === 0) return
 		await this.raw.createIndexes(
-			specs.map((spec) => ({
+			specs.map((spec) => Object.fromEntries(Object.entries({
 				key: spec.key,
 				name: spec.name,
 				unique: spec.unique,
 				sparse: spec.sparse,
 				expireAfterSeconds: spec.expireAfterSeconds,
 				partialFilterExpression: spec.partialFilterExpression,
-			})),
+			}).filter(([, value]) => value !== undefined))),
 		)
 	}
 
@@ -208,14 +221,29 @@ class MongoDatabase implements Database {
 	readonly kind = "mongo" as const
 	private db: DriverDb
 	private client: DriverClient
+	private session?: DriverSession
 
-	constructor(client: DriverClient, db: DriverDb) {
+	constructor(client: DriverClient, db: DriverDb, session?: DriverSession) {
 		this.client = client
 		this.db = db
+		this.session = session
 	}
 
 	collection<T extends { _id: string }>(name: string): Collection<T> {
-		return new MongoCollection<T>(this.db.collection(name))
+		return new MongoCollection<T>(this.db.collection(name), this.session)
+	}
+
+	async transaction<T>(work: (db: Database) => Promise<T>): Promise<T> {
+		if (this.session) return work(this)
+		const session = this.client.startSession()
+		try {
+			return await session.withTransaction(
+				() => work(new MongoDatabase(this.client, this.db, session)),
+				{ readConcern: { level: "snapshot" }, writeConcern: { w: "majority" }, maxCommitTimeMS: 10_000 },
+			)
+		} finally {
+			await session.endSession()
+		}
 	}
 
 	async listCollections(): Promise<string[]> {
@@ -239,6 +267,7 @@ class MongoDatabase implements Database {
 
 type GlobalWithMongo = typeof globalThis & {
 	__fbapiMongo?: { client: DriverClient; database: Database }
+	__fbapiMongoConnecting?: Promise<Database>
 }
 
 /**
@@ -252,8 +281,10 @@ export async function connectMongo(): Promise<Database> {
 
 	const globalRef = globalThis as GlobalWithMongo
 	if (globalRef.__fbapiMongo) return globalRef.__fbapiMongo.database
+	if (globalRef.__fbapiMongoConnecting) return globalRef.__fbapiMongoConnecting
 
-	const driver = (await import("mongodb")) as unknown as {
+	const pending = (async () => {
+		const driver = (await import("mongodb")) as unknown as {
 		MongoClient: new (uri: string, options?: AnyRecord) => DriverClient
 	}
 	const client = new driver.MongoClient(uri, {
@@ -265,12 +296,27 @@ export async function connectMongo(): Promise<Database> {
 		connectTimeoutMS: 8_000,
 		socketTimeoutMS: 45_000,
 		retryWrites: true,
+		ignoreUndefined: true,
 		compressors: ["zlib"],
 	})
-	await client.connect()
-	const database = new MongoDatabase(client, client.db(config.mongoDb))
-	globalRef.__fbapiMongo = { client, database }
-	return database
+		try {
+			await client.connect()
+			const database = new MongoDatabase(client, client.db(config.mongoDb))
+			// These indexes enforce identity uniqueness, not just performance.
+			await ensureIndexes(database)
+			globalRef.__fbapiMongo = { client, database }
+			return database
+		} catch (error) {
+			await client.close().catch(() => {})
+			throw error
+		}
+	})()
+	globalRef.__fbapiMongoConnecting = pending
+	try {
+		return await pending
+	} finally {
+		if (globalRef.__fbapiMongoConnecting === pending) globalRef.__fbapiMongoConnecting = undefined
+	}
 }
 
 export async function closeMongo(): Promise<void> {

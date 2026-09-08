@@ -18,7 +18,8 @@ function readCookie(name: string): string {
 	if (typeof document === "undefined") return ""
 	const prefix = name + "="
 	for (const part of document.cookie.split("; ")) {
-		if (part.startsWith(prefix)) return decodeURIComponent(part.slice(prefix.length))
+		if (part.startsWith(prefix))
+			return decodeURIComponent(part.slice(prefix.length))
 	}
 	return ""
 }
@@ -37,7 +38,12 @@ export class ApiError extends Error {
 
 type ErrorEnvelope = { error?: { message?: string; code?: string } }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+	method: string,
+	path: string,
+	body?: unknown,
+	signal?: AbortSignal,
+): Promise<T> {
 	const headers: Record<string, string> = {}
 	if (body !== undefined) headers["content-type"] = "application/json"
 
@@ -50,6 +56,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 	const response = await fetch(path, {
 		method,
 		headers,
+		signal,
+		redirect: "error",
 		credentials: "same-origin",
 		body: body === undefined ? undefined : JSON.stringify(body),
 	})
@@ -77,8 +85,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
-	get: function get<T>(path: string): Promise<T> {
-		return request<T>("GET", path)
+	get: function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+		return request<T>("GET", path, undefined, signal)
 	},
 	post: function post<T>(path: string, body?: unknown): Promise<T> {
 		return request<T>("POST", path, body)
@@ -104,7 +112,9 @@ export type ConsoleUser = {
 
 export async function loadSession(): Promise<ConsoleUser | null> {
 	try {
-		const body = await api.get<{ user: ConsoleUser | null }>("/api/auth/session")
+		const body = await api.get<{ user: ConsoleUser | null }>(
+			"/api/auth/session",
+		)
 		return body.user ?? null
 	} catch {
 		return null
@@ -112,9 +122,6 @@ export async function loadSession(): Promise<ConsoleUser | null> {
 }
 
 export async function signOut(): Promise<void> {
-	try {
-		await api.post("/api/auth/logout")
-	} catch {
-		// Signing out is best-effort: the cookie is cleared either way.
-	}
+	// A failed request has neither cleared nor revoked the HttpOnly cookie.
+	await api.post("/api/auth/logout")
 }

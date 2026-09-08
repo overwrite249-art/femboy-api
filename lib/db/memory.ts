@@ -20,6 +20,7 @@ import {
 	type UpdateResult,
 	type UpdateSpec,
 } from "./driver.ts"
+import { AsyncLocalStorage } from "node:async_hooks"
 
 function clone<T>(value: T): T {
 	if (value === null || typeof value !== "object") return value
@@ -278,12 +279,25 @@ class MemoryCollection<T extends { _id: string }> implements Collection<T> {
 	private indexes: IndexSpec[] = []
 	private counter = 0
 
+	snapshot() {
+		return {
+			docs: new Map([...this.docs].map(([id, doc]) => [id, clone(doc)])),
+			indexes: clone(this.indexes), counter: this.counter,
+		}
+	}
+
+	restore(snapshot: ReturnType<MemoryCollection<T>["snapshot"]>): void {
+		this.docs = snapshot.docs
+		this.indexes = snapshot.indexes
+		this.counter = snapshot.counter
+	}
+
 	private uniqueGuard(candidate: Record<string, unknown>, ignoreId?: string): void {
 		for (const index of this.indexes) {
 			if (!index.unique) continue
 			const fields = Object.keys(index.key)
 			const values = fields.map((f) => getPath(candidate, f))
-			if (index.sparse && values.some((v) => v === undefined || v === null)) continue
+			if (index.sparse && values.every((v) => v === undefined)) continue
 			if (index.partialFilterExpression && !matchesFilter(candidate, index.partialFilterExpression)) continue
 			for (const [id, existing] of this.docs) {
 				if (id === ignoreId) continue
@@ -348,7 +362,7 @@ class MemoryCollection<T extends { _id: string }> implements Collection<T> {
 
 	async insertOne(doc: T): Promise<void> {
 		const copy = clone(doc) as Record<string, unknown>
-		if (!copy._id) copy._id = `mem_${++this.counter}_${Math.random().toString(36).slice(2, 8)}`
+		if (!copy._id) copy._id = `mem_${++this.counter}_${crypto.randomUUID()}`
 		if (this.docs.has(String(copy._id))) throw new DuplicateKeyError("_id")
 		this.uniqueGuard(copy)
 		this.docs.set(String(copy._id), copy)
@@ -372,7 +386,7 @@ class MemoryCollection<T extends { _id: string }> implements Collection<T> {
 		if (rows.length === 0) {
 			if (!upsert) return { matchedCount: 0, modifiedCount: 0, upsertedId: null }
 			const seed = seedFromFilter(filter)
-			if (!seed._id) seed._id = `mem_${++this.counter}_${Math.random().toString(36).slice(2, 8)}`
+			if (!seed._id) seed._id = `mem_${++this.counter}_${crypto.randomUUID()}`
 			applyUpdate(seed, update, true)
 			this.uniqueGuard(seed)
 			this.docs.set(String(seed._id), seed)
@@ -413,7 +427,7 @@ class MemoryCollection<T extends { _id: string }> implements Collection<T> {
 		if (rows.length === 0) {
 			if (!options.upsert) return null
 			const seed = seedFromFilter(filter)
-			if (!seed._id) seed._id = `mem_${++this.counter}_${Math.random().toString(36).slice(2, 8)}`
+			if (!seed._id) seed._id = `mem_${++this.counter}_${crypto.randomUUID()}`
 			applyUpdate(seed, update, true)
 			this.uniqueGuard(seed)
 			this.docs.set(String(seed._id), seed)
@@ -482,6 +496,15 @@ class MemoryCollection<T extends { _id: string }> implements Collection<T> {
 export class MemoryDatabase implements Database {
 	readonly kind = "memory" as const
 	private collections = new Map<string, MemoryCollection<{ _id: string }>>()
+	private scope = new AsyncLocalStorage<boolean>()
+	private chain: Promise<unknown> = Promise.resolve()
+
+	private exclusive<T>(work: () => Promise<T>): Promise<T> {
+		if (this.scope.getStore()) return work()
+		const run = this.chain.then(() => this.scope.run(true, work))
+		this.chain = run.catch(() => undefined)
+		return run
+	}
 
 	collection<T extends { _id: string }>(name: string): Collection<T> {
 		let existing = this.collections.get(name)
@@ -489,7 +512,31 @@ export class MemoryDatabase implements Database {
 			existing = new MemoryCollection<{ _id: string }>()
 			this.collections.set(name, existing)
 		}
-		return existing as unknown as Collection<T>
+		const db = this
+		return new Proxy(existing, {
+			get(target, property) {
+				const value = Reflect.get(target, property)
+				if (typeof value !== "function") return value
+				return (...args: unknown[]) => db.exclusive(() => value.apply(target, args))
+			},
+		}) as unknown as Collection<T>
+	}
+
+	async transaction<T>(work: (db: Database) => Promise<T>): Promise<T> {
+		if (this.scope.getStore()) return work(this)
+		return this.exclusive(async () => {
+			const snapshots = new Map([...this.collections].map(([name, collection]) => [name, collection.snapshot()]))
+			try {
+				return await work(this)
+			} catch (error) {
+				for (const [name, collection] of this.collections) {
+					const snapshot = snapshots.get(name)
+					if (snapshot) collection.restore(snapshot)
+					else this.collections.delete(name)
+				}
+				throw error
+			}
+		})
 	}
 
 	async listCollections(): Promise<string[]> {

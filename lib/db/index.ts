@@ -8,7 +8,7 @@
  * switch.
  */
 
-import { config } from "../config/env.ts"
+import { config, isProduction, ConfigurationError } from "../config/env.ts"
 import type { Collection, Database } from "./driver.ts"
 import { MemoryDatabase } from "./memory.ts"
 import { COLLECTIONS, usageCollectionName } from "./types.ts"
@@ -49,7 +49,10 @@ export function getMemoryDb(): MemoryDatabase {
 
 export async function getDb(): Promise<Database> {
 	if (override) return override
-	if (!config.mongoUri) return getMemoryDb()
+	if (!config.mongoUri) {
+		if (isProduction()) throw new ConfigurationError("production requires MongoDB")
+		return getMemoryDb()
+	}
 	// After a connection failure, back off for a few seconds rather than
 	// hammering a dead cluster on every single request.
 	if (mongoFailedAt && Date.now() - mongoFailedAt < 3_000) {
@@ -119,7 +122,7 @@ export async function oauthStates(): Promise<Collection<OAuthStateDoc>> {
 	return (await getDb()).collection<OAuthStateDoc>(COLLECTIONS.oauthStates)
 }
 
-const ensuredUsageBuckets = new Set<string>()
+const ensuredUsageBuckets = new WeakMap<Database, Map<string, Promise<void>>>()
 
 /**
  * Returns the usage collection for a month, creating its indexes on first use.
@@ -129,13 +132,21 @@ export async function usageLogs(bucket = monthBucket()): Promise<Collection<Usag
 	const db = await getDb()
 	const name = usageCollectionName(bucket)
 	const collection = db.collection<UsageLogDoc>(name)
-	if (!ensuredUsageBuckets.has(name)) {
-		ensuredUsageBuckets.add(name)
-		try {
-			await collection.createIndexes(USAGE_INDEXES)
-		} catch {
-			// A racing invocation may have created them already; harmless.
-		}
+	let buckets = ensuredUsageBuckets.get(db)
+	if (!buckets) {
+		buckets = new Map()
+		ensuredUsageBuckets.set(db, buckets)
+	}
+	let pending = buckets.get(name)
+	if (!pending) {
+		pending = collection.createIndexes(USAGE_INDEXES)
+		buckets.set(name, pending)
+	}
+	try {
+		await pending
+	} catch (error) {
+		if (buckets.get(name) === pending) buckets.delete(name)
+		throw error // Retry next time; never silently skip uniqueness enforcement.
 	}
 	return collection
 }

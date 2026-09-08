@@ -57,7 +57,8 @@ test("an unconfigured secret fails closed rather than open", async () => {
 			/not configured/i,
 		)
 	} finally {
-		process.env.CRON_SECRET = previous
+		if (previous === undefined) delete process.env.CRON_SECRET
+		else process.env.CRON_SECRET = previous
 	}
 })
 
@@ -115,7 +116,7 @@ test("expired tokens are disabled and live ones are left alone", async () => {
 	assert.equal((await collection.findOne({ _id: "never" }))?.status, "enabled")
 })
 
-test("reconciliation corrects a drifted spend counter from the ledger", async () => {
+test("reconciliation never overwrites durable spend from incomplete analytics", async () => {
 	setDb(new MemoryDatabase())
 	setRedis(new MemoryRedis())
 
@@ -128,7 +129,7 @@ test("reconciliation corrects a drifted spend counter from the ledger", async ()
 		status: "enabled",
 		group: "default",
 		quota: 10_000,
-		// Wrong on purpose: a crash between the ledger write and this counter.
+		// Analytics are incomplete; they must never replace durable accounting.
 		usedQuota: 999,
 		requestCount: 0,
 		createdAt: new Date(),
@@ -162,9 +163,8 @@ test("reconciliation corrects a drifted spend counter from the ledger", async ()
 	})
 
 	const result = await reconcileQuota()
-	assert.equal(result.corrected, 1)
-	// The ledger says 500, so the counter must now say 500.
-	assert.equal((await (await users()).findOne({ _id: "u1" }))?.usedQuota, 500)
+	assert.equal(result.corrected, 0)
+	assert.equal((await (await users()).findOne({ _id: "u1" }))?.usedQuota, 999)
 
 	// Running it again is a no-op: reconciliation must be idempotent.
 	assert.equal((await reconcileQuota()).corrected, 0)

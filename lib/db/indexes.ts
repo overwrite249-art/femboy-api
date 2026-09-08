@@ -15,6 +15,13 @@ import { COLLECTIONS, usageCollectionName } from "./types.ts"
 import type { Database, IndexSpec } from "./driver.ts"
 
 export const INDEXES: Record<string, IndexSpec[]> = {
+	coordination_keys: [
+		{ key: { expiresAt: 1 }, name: "ttl_coordination_keys", expireAfterSeconds: 0 },
+	],
+	coordination_items: [
+		{ key: { key: 1, generation: 1, position: 1 }, name: "queue_position", unique: true },
+		{ key: { expiresAt: 1 }, name: "ttl_coordination_items", expireAfterSeconds: 0 },
+	],
 	[COLLECTIONS.users]: [
 		{ key: { username: 1 }, name: "uniq_username", unique: true },
 		{ key: { email: 1 }, name: "uniq_email", unique: true, sparse: true },
@@ -59,6 +66,7 @@ export const INDEXES: Record<string, IndexSpec[]> = {
 		// The exactly-once anchor: (requestId, kind) can exist at most once.
 		{ key: { requestId: 1, kind: 1 }, name: "uniq_request_kind", unique: true },
 		{ key: { state: 1, createdAt: 1 }, name: "pending_scan" },
+		{ key: { state: 1, expiresAt: 1 }, name: "abandoned_holds" },
 		{ key: { userId: 1, createdAt: -1 }, name: "by_user" },
 	],
 	[COLLECTIONS.tasks]: [
@@ -80,6 +88,9 @@ export const INDEXES: Record<string, IndexSpec[]> = {
 	[COLLECTIONS.settings]: [],
 	[COLLECTIONS.oauthStates]: [
 		{ key: { expiresAt: 1 }, name: "ttl_state", expireAfterSeconds: 0 },
+	],
+	[COLLECTIONS.sessionRevocations]: [
+		{ key: { expiresAt: 1 }, name: "ttl_revocation", expireAfterSeconds: 0 },
 	],
 }
 

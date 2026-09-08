@@ -56,26 +56,13 @@ The order matters and is not negotiable:
 | `lib/cron` | scheduled maintenance | db, redis, usage |
 | `lib/admin` | control plane: sessions, store, catalog, audit | everything |
 
-Nothing in `lib/**` imports from `app/**`, and nothing in `lib/**` imports
-`next/*`. That is what makes the whole thing testable with `bun test` and no
-framework harness -- 250 tests run in under five seconds because there is no
-server to boot.
+Nothing in `lib/**` imports `next/*`. The core can be exercised with Node's
+native test runner without booting Next. The core uses Web APIs where practical,
+plus MongoDB, Undici's pinned connection dispatcher, and Node async context for
+the transactional memory twin. Redis uses the Upstash REST protocol directly.
 
-## Zero runtime dependencies in the core
-
-Every module in `lib/**` uses only Web-standard APIs: `Request`, `Response`,
-`fetch`, `crypto.subtle`, `ReadableStream`, `TextEncoder`. The two real
-dependencies (`mongodb`, `@upstash/redis`) are imported *dynamically, inside
-functions*, so that:
-
-- a unit test can run without either service configured, and
-- an unconfigured service degrades to an in-memory twin rather than a crash.
-
-The twins are not toys. `MemoryDatabase` implements the same `Collection`
-interface including `findOneAndUpdate` as a compare-and-swap and unique index
-enforcement, and `MemoryRedis` runs behaviour-identical JavaScript versions of
-every Lua script, serialised through a promise chain so that atomicity is
-preserved and not merely simulated.
+The memory twins are for development and tests, not proof of production service
+parity. CI also runs accounting tests against a disposable MongoDB replica set.
 
 ## Why the relay runs on Node, not Edge
 
@@ -86,35 +73,47 @@ of every query, or Postgres. Since MongoDB is the requirement, Node is the
 consequence.
 
 What is preserved: streaming is still a passthrough of `ReadableStream`, and
-nothing buffers a whole response. What is lost: cold starts are a little slower
+streaming responses stay incremental (non-stream JSON is bounded and buffered). What is lost: cold starts are a little slower
 and the function is regional rather than at the edge.
 
 `export const runtime = "nodejs"` is declared explicitly on every route rather
 than relying on a default, so the choice is visible where it applies.
 
-## Three-tier storage
+## Storage responsibilities
 
-1. **Upstash Redis over REST** -- hot path. Token identity cache, quota ledger,
-   rate-limit counters, channel health, ability cache. Every read-modify-write is
-   a Lua script, so it is atomic across concurrent invocations.
-2. **MongoDB** -- authoritative. Users, tokens, channels, sealed channel keys,
-   pricing, usage logs (partitioned monthly as `usage_logs_YYYYMM`), rollups,
-   audit, settings.
-3. **In-process twins** -- used when neither is configured. Makes the test suite
-   dependency-free and local development possible with no services running.
+1. **MongoDB** is authoritative for users, tokens, channels, sealed provider keys,
+   pricing, revocations, tasks, audit and accounting. Reservations, settlement,
+   redemption and their balance updates use snapshot/majority transactions.
+   Atlas or a replica set is required. Financial journals have no automatic TTL.
+2. **Upstash Redis** coordinates shared rate limits, request-owned concurrency
+   leases, caches, health, buffered analytics and queued settlement recovery.
+   Eviction cannot restore money, but can reset limiter history or lose queued
+   telemetry; use appropriate retention and monitoring.
+3. **In-process twins** are permitted only outside production. Their transaction
+   serialization and rollback are tested; they are not a distributed backend.
 
-Redis is a cache, never an authority. The elected channel is always re-read from
-Mongo and re-checked with `serves()` before its key is used, because a
-denormalised ability row is a performance structure and not a permission
-(finding: caches are never authorization).
+Authentication re-reads current key and user authority even on a digest-cache
+hit. Routing rechecks current channel eligibility. Caches are not permission
+stores. Session revocation is checked in durable storage on every cookie use.
 
-## Usage writes are buffered
+## Accounting and buffered usage
 
-Billing one document per request would make Mongo the bottleneck at the exact
-moment traffic is highest. Instead each request appends to a Redis list and a
-cron job drains it in batches, keyed on the request id so a replayed drain
-cannot bill twice. The ledger in Redis is decremented synchronously, so a user's
-balance is always current even when the Mongo write is seconds behind.
+An estimate is held before calling a provider. The final charge may exceed that
+estimate and create debt; this is not a hard maximum-spend guarantee. Settlement
+updates both balances, lifetime counters and the journal in one transaction.
+The gateway generates request IDs itself, and an applied ID cannot fund new work.
+
+Usage events are analytics, not a source from which money is reconstructed. A
+flush peeks at Redis, commits immutable events and derived rollups together, then
+acknowledges the prefix only while it owns the lock. Replays cannot increment a
+committed event twice.
+
+If Mongo is temporarily down at settlement, the measured outcome is queued in
+Redis for idempotent replay. If both stores fail, or a process dies before the
+outcome is persisted, the durable hold remains. The reconciliation job reports
+abandoned holds for operator review rather than guessing a refund.
+
+Existing balances require the explicit [v2 migration](QUOTA-MIGRATION.md).
 
 ## Control plane
 

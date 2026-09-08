@@ -125,6 +125,17 @@ export class GatewayError extends Error {
 	/** Wraps anything thrown into a GatewayError without leaking stack details. */
 	static from(value: unknown): GatewayError {
 		if (GatewayError.is(value)) return value
+		if (value instanceof Error && value.name === "ConfigurationError") {
+			return new GatewayError({ code: ErrorCode.CONFIGURATION_ERROR, status: 503, message: value.message })
+		}
+		if (value instanceof SyntaxError) return invalidRequest("request body is not valid JSON")
+		if (value instanceof Error && value.name === "JsonLimitError") {
+			if ((value as Error & { limit?: string }).limit === "timeout") {
+				return new GatewayError({ code: ErrorCode.INVALID_REQUEST, status: 408, message: value.message })
+			}
+			return (value as Error & { limit?: string }).limit === "bytes"
+				? payloadTooLarge(value.message) : invalidRequest(value.message)
+		}
 		if (value instanceof DOMException && value.name === "TimeoutError") {
 			return upstreamTimeout(value.message)
 		}
@@ -136,11 +147,10 @@ export class GatewayError extends Error {
 				retryable: false,
 			})
 		}
-		const message = value instanceof Error ? value.message : String(value)
 		return new GatewayError({
 			code: ErrorCode.INTERNAL_ERROR,
 			status: 500,
-			message,
+			message: "internal server error",
 			cause: value,
 		})
 	}

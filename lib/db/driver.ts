@@ -63,6 +63,8 @@ export type Collection<T extends { _id: string }> = {
 export type Database = {
 	readonly kind: "mongo" | "memory"
 	collection<T extends { _id: string }>(name: string): Collection<T>
+	/** All writes commit together or none do. Never emulate this with a cache lock. */
+	transaction<T>(work: (db: Database) => Promise<T>): Promise<T>
 	listCollections(): Promise<string[]>
 	ping(): Promise<boolean>
 	close(): Promise<void>

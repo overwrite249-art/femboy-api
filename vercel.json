@@ -2,16 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "regions": ["iad1"],
-  "crons": [
-    { "path": "/api/cron/health-check", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/flush-usage", "schedule": "*/2 * * * *" },
-    { "path": "/api/cron/poll-tasks", "schedule": "*/1 * * * *" },
-    { "path": "/api/cron/reconcile-quota", "schedule": "*/10 * * * *" },
-    { "path": "/api/cron/rollup", "schedule": "7 * * * *" },
-    { "path": "/api/cron/refresh-pricing", "schedule": "23 3 * * *" },
-    { "path": "/api/cron/expire-tokens", "schedule": "41 * * * *" },
-    { "path": "/api/cron/partition-maint", "schedule": "13 4 * * *" }
-  ],
   "functions": {
     "app/api/v1/**/route.ts": { "maxDuration": 300, "memory": 1024 },
     "app/api/v1beta/**/route.ts": { "maxDuration": 300, "memory": 1024 },
@@ -23,6 +13,7 @@
     "app/api/dify/**/route.ts": { "maxDuration": 60, "memory": 1024 },
     "app/api/admin/**/route.ts": { "maxDuration": 60, "memory": 1024 },
     "app/api/auth/**/route.ts": { "maxDuration": 60, "memory": 1024 },
+    "app/api/setup/**/route.ts": { "maxDuration": 240, "memory": 1024 },
     "app/api/cron/**/route.ts": { "maxDuration": 300, "memory": 1024 }
   }
 }

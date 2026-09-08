@@ -75,6 +75,9 @@ export const config = {
 	get redisToken(): string {
 		return envStr("UPSTASH_REDIS_REST_TOKEN")
 	},
+	get coordinationBackend(): string {
+		return envStr("COORDINATION_BACKEND", "auto").toLowerCase()
+	},
 
 	// ---- secrets -----------------------------------------------------------
 	get keyPepper(): string {
@@ -122,6 +125,13 @@ export const config = {
 	get streamingIdleTimeoutMs(): number {
 		return envInt("STREAMING_IDLE_TIMEOUT_MS", 300_000)
 	},
+	/** Absolute lifetime, including a provider that keeps sending tiny chunks. */
+	get upstreamRequestTimeoutMs(): number {
+		return Math.max(1000, Math.min(300_000, envInt("UPSTREAM_REQUEST_TIMEOUT_MS", 300_000)))
+	},
+	get requestBodyTimeoutMs(): number {
+		return Math.max(1000, Math.min(60_000, envInt("REQUEST_BODY_TIMEOUT_MS", 30_000)))
+	},
 	get ssePingIntervalMs(): number {
 		return envInt("SSE_PING_INTERVAL_MS", 15_000)
 	},
@@ -157,7 +167,7 @@ export const config = {
 		return envBool("GEMINI_SAFETY_OFF", false)
 	},
 	get allowPlaintextUpstream(): boolean {
-		return envBool("ALLOW_PLAINTEXT_UPSTREAM", false)
+		return !isProduction() && envBool("ALLOW_PLAINTEXT_UPSTREAM", false)
 	},
 
 	// ---- channel health ----------------------------------------------------
@@ -292,6 +302,23 @@ export const REQUIRED_PRODUCTION_SECRETS = [
 
 export type ConfigIssue = { name: string; problem: string }
 
+export class ConfigurationError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = "ConfigurationError"
+	}
+}
+
+/** Runtime-only: a build does not contact services or require real secrets. */
+export function assertProductionReady(): void {
+	if (!isProduction()) return
+	const issues = validateConfig()
+	if (issues.length) {
+		throw new ConfigurationError("invalid production configuration: " +
+			issues.map((issue) => `${issue.name} ${issue.problem}`).join("; "))
+	}
+}
+
 /**
  * Validates configuration. Called by `/api/admin/health` and by the startup
  * self-check so misconfiguration surfaces as a diagnosable list rather than a
@@ -314,13 +341,21 @@ export function validateConfig(): ConfigIssue[] {
 			}
 		}
 	}
+	const backend = config.coordinationBackend
+	if (!["auto", "mongo", "upstash"].includes(backend)) {
+		issues.push({ name: "COORDINATION_BACKEND", problem: "must be auto, mongo or upstash" })
+	}
+	if (backend === "upstash" || (backend === "auto" && (config.redisUrl || config.redisToken))) {
+		if (!config.redisUrl) issues.push({ name: "UPSTASH_REDIS_REST_URL", problem: "missing" })
+		if (!config.redisToken) issues.push({ name: "UPSTASH_REDIS_REST_TOKEN", problem: "missing" })
+	}
 	if (config.quotaPerUnit <= 0) {
 		issues.push({ name: "QUOTA_PER_UNIT", problem: "must be > 0" })
 	}
 	if (config.trustedProxyHops < 0) {
 		issues.push({ name: "TRUSTED_PROXY_HOPS", problem: "must be >= 0" })
 	}
-	if (config.allowPlaintextUpstream && isProduction()) {
+	if (envBool("ALLOW_PLAINTEXT_UPSTREAM", false) && isProduction()) {
 		issues.push({
 			name: "ALLOW_PLAINTEXT_UPSTREAM",
 			problem: "http:// upstreams must not be enabled in production",

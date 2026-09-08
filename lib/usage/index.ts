@@ -15,11 +15,14 @@
  * slow.
  */
 
-import { usageLogs, usageRollups } from "../db/index.ts"
+import { usageLogs, getDb, COLLECTIONS, usageCollectionName } from "../db/index.ts"
 import type { UsageLogDoc } from "../db/types.ts"
-import { redisCommand, redisPipeline } from "../redis/client.ts"
+import type { UsageRollupDoc } from "../db/types.ts"
+import { DuplicateKeyError, type Database } from "../db/driver.ts"
+import { redisCommand, redisSetNx, runScript } from "../redis/client.ts"
 import { K } from "../redis/keys.ts"
 import { monthBucket } from "../util/time.ts"
+import { randomHex } from "../util/crypto.ts"
 import { EMPTY_USAGE } from "./measure.ts"
 import type { NormalizedUsage } from "./measure.ts"
 
@@ -146,58 +149,68 @@ export async function persist(docs: UsageLogDoc[]): Promise<number> {
 
 	let written = 0
 	for (const [bucket, rows] of byBucket) {
-		const collection = await usageLogs(bucket)
-		for (const doc of rows) {
-			const { _id, ...rest } = doc
-			await collection.updateOne({ _id }, { $set: rest }, true)
-			written++
+		// Ensure indexes outside the transaction; index creation is not a
+		// transactional operation. The event and every derived counter are.
+		await usageLogs(bucket)
+		for (let attempt = 0; ; attempt++) {
+			try {
+				await (await getDb()).transaction(async (db) => {
+					const collection = db.collection<UsageLogDoc>(usageCollectionName(bucket))
+					for (const doc of rows) {
+						if (await collection.findOne({ _id: doc._id })) continue
+						await collection.insertOne({ ...doc, createdAt: new Date(doc.createdAt) })
+						await incrementRollups(db, [doc])
+					}
+				})
+				break
+			} catch (error) {
+				// Two first deliveries may race at the unique id. Retry against
+				// the committed row rather than adding the rollup again.
+				if (!DuplicateKeyError.is(error) || attempt >= 2) throw error
+			}
 		}
+		written += rows.length
 	}
 
-	await applyRollups(docs)
 	return written
 }
 
 /**
  * Drains the buffer into Mongo.
  *
- * Entries are popped one at a time in a single pipeline. Reading a range and
- * trimming it afterwards would be fewer commands but would drop rows whenever
- * two flushes overlap, which for a billing ledger is the wrong trade.
+ * Peek, persist, then acknowledge under an owner-checked lease. A killed
+ * process loses no entries. A worker whose lease expired cannot trim another
+ * worker's queue; replaying a committed prefix is safe and idempotent.
  */
 export async function flushUsageBuffer(limit = 500): Promise<number> {
 	const size = Math.max(1, Math.min(limit, 1000))
-	let raw: unknown[] = []
+	const lock = K.lock("usage-flush")
+	const owner = randomHex(16)
 	try {
-		raw = await redisPipeline(Array.from({ length: size }, () => ["LPOP", K.usageBuffer()]))
+		if (!await redisSetNx(lock, owner, 120)) return 0
 	} catch {
 		return 0
 	}
-
-	const docs: UsageLogDoc[] = []
-	for (const entry of raw) {
-		if (typeof entry !== "string" || entry.length === 0) continue
-		try {
-			const parsed = JSON.parse(entry) as UsageLogDoc
-			if (parsed && typeof parsed._id === "string") docs.push(parsed)
-		} catch {
-			// A corrupt entry is dropped rather than stalling the whole drain.
-		}
-	}
-
-	if (docs.length === 0) return 0
-
 	try {
-		return await persist(docs)
-	} catch (error) {
-		// Put them back so the next run retries. Upserting on the request id
-		// means a partial write followed by a replay is still one charge.
-		try {
-			await redisCommand(["RPUSH", K.usageBuffer(), ...docs.map((d) => JSON.stringify(d))])
-		} catch {
-			// Nothing further can be done here; the error propagates.
+		const raw = await redisCommand(["LRANGE", K.usageBuffer(), 0, size - 1])
+		if (!Array.isArray(raw) || !raw.length) return 0
+		const docs: UsageLogDoc[] = []
+		for (const entry of raw) {
+			if (typeof entry !== "string" || entry.length === 0) continue
+			try {
+				const parsed = JSON.parse(entry) as UsageLogDoc
+				if (parsed && typeof parsed._id === "string" && Number.isFinite(new Date(parsed.createdAt).getTime())) {
+					docs.push(parsed)
+				}
+			} catch {
+				// Corrupt entries cannot poison the entire queue.
+			}
 		}
-		throw error
+		const written = await persist(docs)
+		await runScript("ackUsage", [K.usageBuffer(), lock], [owner, raw.length])
+		return written
+	} finally {
+		await runScript("releaseLock", [lock], [owner]).catch(() => {})
 	}
 }
 
@@ -218,10 +231,9 @@ export async function pendingUsageCount(): Promise<number> {
  * Rollups are a convenience, not the ledger, so a failure here is swallowed -
  * the authoritative rows are already written and can be re-aggregated.
  */
-export async function applyRollups(docs: UsageLogDoc[]): Promise<void> {
+async function incrementRollups(db: Database, docs: UsageLogDoc[]): Promise<void> {
 	if (docs.length === 0) return
-	try {
-		const collection = await usageRollups()
+		const collection = db.collection<UsageRollupDoc>(COLLECTIONS.usageRollups)
 		for (const doc of docs) {
 			const bucket = hourBucket(new Date(doc.createdAt))
 			const scopes: Array<{ scope: "user" | "channel" | "model" | "global"; key: string }> = [
@@ -248,9 +260,11 @@ export async function applyRollups(docs: UsageLogDoc[]): Promise<void> {
 				)
 			}
 		}
-	} catch {
-		// Derived data only.
-	}
+}
+
+/** Public replays use the same event-id transaction, never naked increments. */
+export async function applyRollups(docs: UsageLogDoc[]): Promise<void> {
+	await persist(docs)
 }
 
 export { addUsage, detectUsageShape, EMPTY_USAGE, maxUsage, normalizeUsage } from "./measure.ts"

@@ -30,9 +30,10 @@ export async function runScriptTwin(
 	keys: string[],
 	args: Array<string | number>,
 ): Promise<number[]> {
+	if (!(redis instanceof MemoryRedis)) throw new Error("script twins require the memory driver")
 	// Queue behind whatever is already running, and let the next caller queue
 	// behind this one regardless of how it settles.
-	const run = scriptChain.then(() => dispatch(redis, name, keys, args))
+	const run = scriptChain.then(() => executeScriptProgram(redis, name, keys, args))
 	scriptChain = run.then(
 		() => undefined,
 		() => undefined,
@@ -40,19 +41,33 @@ export async function runScriptTwin(
 	return run
 }
 
-async function dispatch(
-	redis: RedisLike,
+/** Caller MUST supply atomic execution: a Mongo transaction or the twin queue. */
+export async function executeScriptProgram(
+	redis: Pick<RedisLike, "command">,
 	name: ScriptName,
 	keys: string[],
 	args: Array<string | number>,
 ): Promise<number[]> {
-	if (!(redis instanceof MemoryRedis)) {
-		throw new Error("script twins require the memory driver")
-	}
 	const n = (i: number) => Number(args[i] ?? 0)
 	const s = (i: number) => String(args[i] ?? "")
 
 	switch (name) {
+		case "ackUsage":
+			if (await redis.command(["GET", keys[1]]) !== s(0)) return [0]
+			await redis.command(["LTRIM", keys[0], n(1), -1])
+			await redis.command(["DEL", keys[1]])
+			return [1]
+		case "concurrency": {
+			await redis.command(["ZREMRANGEBYSCORE", keys[0], "-inf", n(1)])
+			const count = Number(await redis.command(["ZCARD", keys[0]]))
+			if (count >= n(0)) return [0, count]
+			await redis.command(["ZADD", keys[0], n(1) + n(2), s(3)])
+			await redis.command(["PEXPIRE", keys[0], n(2) + 1000])
+			return [1, count + 1]
+		}
+		case "releaseLock":
+			if (await redis.command(["GET", keys[0]]) !== s(0)) return [0]
+			return [Number(await redis.command(["DEL", keys[0]]))]
 		case "tokenBucket":
 			return tokenBucket(redis, keys[0], n(0), n(1), n(2), n(3), n(4))
 		case "fixedWindow":
@@ -75,7 +90,7 @@ async function dispatch(
 }
 
 async function tokenBucket(
-	r: MemoryRedis,
+	r: Pick<RedisLike, "command">,
 	key: string,
 	capacity: number,
 	refill: number,
@@ -104,7 +119,7 @@ async function tokenBucket(
 }
 
 async function fixedWindow(
-	r: MemoryRedis,
+	r: Pick<RedisLike, "command">,
 	key: string,
 	limit: number,
 	window: number,
@@ -125,7 +140,7 @@ async function fixedWindow(
 }
 
 async function slidingSuccess(
-	r: MemoryRedis,
+	r: Pick<RedisLike, "command">,
 	key: string,
 	limit: number,
 	window: number,
@@ -142,7 +157,7 @@ async function slidingSuccess(
 }
 
 async function reserve(
-	r: MemoryRedis,
+	r: Pick<RedisLike, "command">,
 	userKey: string,
 	tokenKey: string,
 	resvKey: string,
@@ -177,7 +192,7 @@ async function reserve(
 }
 
 async function settle(
-	r: MemoryRedis,
+	r: Pick<RedisLike, "command">,
 	userKey: string,
 	tokenKey: string,
 	resvKey: string,
@@ -217,7 +232,7 @@ async function settle(
 }
 
 async function release(
-	r: MemoryRedis,
+	r: Pick<RedisLike, "command">,
 	userKey: string,
 	tokenKey: string,
 	resvKey: string,
@@ -249,7 +264,7 @@ async function release(
 	return [1, reserved]
 }
 
-async function nextKey(r: MemoryRedis, key: string, size: number): Promise<number[]> {
+async function nextKey(r: Pick<RedisLike, "command">, key: string, size: number): Promise<number[]> {
 	if (size <= 0) return [-1]
 	const n = (await r.command(["INCR", key])) as number
 	await r.command(["EXPIRE", key, 86_400])
@@ -257,7 +272,7 @@ async function nextKey(r: MemoryRedis, key: string, size: number): Promise<numbe
 }
 
 async function health(
-	r: MemoryRedis,
+	r: Pick<RedisLike, "command">,
 	key: string,
 	ok: number,
 	threshold: number,

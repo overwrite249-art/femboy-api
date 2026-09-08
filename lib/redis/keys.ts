@@ -30,7 +30,7 @@ export const K = {
 	/** Successful-requests sliding window (abuse damper). */
 	successWindow: (userId: string) => `rl:succ:${seg(userId)}`,
 	/** Concurrency gate. */
-	concurrency: (scope: string, id: string) => `rl:conc:${seg(scope)}:${seg(id)}`,
+	concurrency: (scope: string, id: string) => `rl:conc:v2:${seg(scope)}:${seg(id)}`,
 
 	/** Sorted channel candidates for a (group, model) pair. */
 	ability: (group: string, model: string) => `ab:${seg(group)}:${seg(model)}`,
@@ -53,6 +53,8 @@ export const K = {
 	idempotency: (requestId: string) => `idem:${seg(requestId)}`,
 	/** Durable stream of quota mutations pending reconciliation. */
 	quotaJournal: () => "quota:journal",
+	/** v2 measured settlements waiting for the durable database to recover. */
+	quotaSettlementBuffer: () => "quota:settlements:v2",
 	/** Distributed lock (cron singleflight). */
 	lock: (name: string) => `lock:${seg(name)}`,
 	/** OAuth CSRF state. */

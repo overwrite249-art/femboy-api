@@ -12,7 +12,8 @@
  */
 
 import { errorResponse, jsonResponse } from "../http/respond.ts"
-import { notFound } from "../http/errors.ts"
+import { forbidden, notFound } from "../http/errors.ts"
+import type { UserDoc } from "../db/types.ts"
 import { healthCheck } from "../cron/jobs.ts"
 import { recordAudit } from "./audit.ts"
 import {
@@ -52,6 +53,7 @@ import {
 	updateChannel,
 	updateToken,
 	updateUser,
+	userView,
 } from "./store.ts"
 import { getToken } from "./store.ts"
 
@@ -78,6 +80,14 @@ async function audit(
 		meta,
 		ipHash: context.ipHash,
 	})
+}
+
+/** Administrators manage members; only root can create or change authorities. */
+function assertCanManageUser(context: AdminContext, target?: UserDoc, nextRole?: unknown): void {
+	if (context.role === "root") return
+	if ((target && target.role !== "user") || (nextRole !== undefined && nextRole !== "user")) {
+		throw forbidden("only root can manage elevated accounts and their credentials")
+	}
 }
 
 export async function handleAdminRequest(req: Request, segments: string[]): Promise<Response> {
@@ -120,17 +130,19 @@ export async function handleAdminRequest(req: Request, segments: string[]): Prom
 
 			// ---------------------------------------------------------------
 			case "users": {
-				if (!second && method === "GET") return ok({ users: await listUsers({ limit, skip }) }, context)
+				if (!second && method === "GET") return ok({ users: (await listUsers({ limit, skip })).map(userView) }, context)
 				if (!second && method === "POST") {
+					assertCanManageUser(context, undefined, body.role)
 					const user = await createUser(body)
 					await audit(context, "user.create", "user", user._id, { username: user.username })
-					return ok({ user }, context, 201)
+					return ok({ user: userView(user) }, context, 201)
 				}
-				if (second && method === "GET") return ok({ user: await getUser(second) }, context)
+				if (second && method === "GET") return ok({ user: userView(await getUser(second)) }, context)
 				if (second && (method === "PATCH" || method === "PUT")) {
+					assertCanManageUser(context, await getUser(second), body.role)
 					const user = await updateUser(second, body)
 					await audit(context, "user.update", "user", second, body)
-					return ok({ user }, context)
+					return ok({ user: userView(user) }, context)
 				}
 				break
 			}
@@ -142,6 +154,7 @@ export async function handleAdminRequest(req: Request, segments: string[]): Prom
 					return ok({ tokens: await listTokens(userId, { limit, skip }) }, context)
 				}
 				if (!second && method === "POST") {
+					assertCanManageUser(context, await getUser(String(body.userId ?? "")))
 					const created = await createToken(body)
 					await audit(context, "token.create", "token", created.token._id, {
 						userId: created.token.userId,
@@ -150,6 +163,7 @@ export async function handleAdminRequest(req: Request, segments: string[]): Prom
 					return ok({ token: created.token, key: created.key }, context, 201)
 				}
 				if (second && third === "rotate" && method === "POST") {
+					assertCanManageUser(context, await getUser((await getToken(second)).userId))
 					const rotated = await rotateToken(second)
 					await audit(context, "token.rotate", "token", second)
 					return ok({ token: rotated.token, key: rotated.key }, context)
@@ -158,11 +172,13 @@ export async function handleAdminRequest(req: Request, segments: string[]): Prom
 					return ok({ token: tokenView(await getToken(second)) }, context)
 				}
 				if (second && (method === "PATCH" || method === "PUT")) {
+					assertCanManageUser(context, await getUser((await getToken(second)).userId))
 					const token = await updateToken(second, body)
 					await audit(context, "token.update", "token", second, body)
 					return ok({ token }, context)
 				}
 				if (second && method === "DELETE") {
+					assertCanManageUser(context, await getUser((await getToken(second)).userId))
 					await deleteToken(second)
 					await audit(context, "token.delete", "token", second)
 					return ok({ deleted: true }, context)

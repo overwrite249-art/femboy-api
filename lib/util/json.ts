@@ -27,35 +27,36 @@ export class JsonLimitError extends Error {
 }
 
 /**
- * `JSON.parse` with a reviver that drops dangerous keys outright.
- *
- * Using a reviver (rather than a post-walk) matters: by the time a post-walk
- * runs, `Object.prototype` has already been mutated by the parse itself in
- * engines that honour `__proto__` in object literals.
+ * Parse without a recursive reviver, bound the tree, then remove dangerous
+ * keys before returning it. JSON.parse creates own data properties; unlike
+ * Object.assign, parsing "__proto__" does not mutate Object.prototype.
  */
 export function safeJsonParse<T = unknown>(text: string, options: JsonParseOptions = {}): T {
 	const maxBytes = options.maxBytes ?? config.maxRequestBodyBytes
-	if (text.length > maxBytes) {
+	if (Buffer.byteLength(text, "utf8") > maxBytes) {
 		throw new JsonLimitError("bytes", `payload exceeds ${maxBytes} bytes`)
 	}
-	const parsed = JSON.parse(text, function reviver(key, value) {
-		if (FORBIDDEN_KEYS.has(key)) return undefined
-		return value
-	}) as T
+	const parsed = JSON.parse(text) as T
 	assertJsonLimits(parsed, options)
-	return parsed
+	return cloneSanitized(parsed)
 }
 
 /** Strips forbidden keys from an already-parsed value (defence in depth). */
 export function sanitizeParsed<T>(value: T): T {
+	assertJsonLimits(value)
+	return cloneSanitized(value)
+}
+
+/** Only called after the iterative bounds check, so recursion is bounded. */
+function cloneSanitized<T>(value: T): T {
 	if (Array.isArray(value)) {
-		return value.map((item) => sanitizeParsed(item)) as unknown as T
+		return value.map((item) => cloneSanitized(item)) as unknown as T
 	}
 	if (value && typeof value === "object") {
 		const out: Record<string, unknown> = {}
 		for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
 			if (FORBIDDEN_KEYS.has(key)) continue
-			out[key] = sanitizeParsed(val)
+			out[key] = cloneSanitized(val)
 		}
 		return out as unknown as T
 	}
@@ -79,13 +80,13 @@ export function assertJsonLimits(value: unknown, options: JsonParseOptions = {})
 			throw new JsonLimitError("depth", `payload nests deeper than ${maxDepth} levels`)
 		}
 		const current = entry.value
-		if (Array.isArray(current)) {
-			for (const item of current) stack.push({ value: item, depth: entry.depth + 1 })
-		} else if (current && typeof current === "object") {
-			for (const item of Object.values(current as Record<string, unknown>)) {
-				stack.push({ value: item, depth: entry.depth + 1 })
-			}
+		const children = Array.isArray(current) ? current
+			: current && typeof current === "object" ? Object.values(current) : []
+		// Reject wide trees before allocating a work item for every child.
+		if (nodes + stack.length + children.length > maxNodes) {
+			throw new JsonLimitError("nodes", `payload exceeds ${maxNodes} JSON nodes`)
 		}
+		for (const item of children) stack.push({ value: item, depth: entry.depth + 1 })
 	}
 }
 
@@ -111,6 +112,7 @@ export function jsonDepth(value: unknown): number {
 
 /** Deep clone that also strips forbidden keys. Structured-clone free. */
 export function safeClone<T>(value: T): T {
+	assertJsonLimits(value)
 	return sanitizeParsed(JSON.parse(JSON.stringify(value)) as T)
 }
 
@@ -145,14 +147,35 @@ export function asBool(value: unknown, fallback = false): boolean {
 export async function readLimitedText(
 	body: ReadableStream<Uint8Array> | null,
 	maxBytes: number,
+	options: { timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<string> {
-	if (!body) return ""
+	return new TextDecoder().decode(await readLimitedBytes(body, maxBytes, options))
+}
+
+/** Byte-faithful uploads share the same absolute deadline and cancellation. */
+export async function readLimitedBytes(
+	body: ReadableStream<Uint8Array> | null,
+	maxBytes: number,
+	options: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<Uint8Array> {
+	if (!body) return new Uint8Array(0)
 	const reader = body.getReader()
 	const chunks: Uint8Array[] = []
 	let total = 0
+	let timer: ReturnType<typeof setTimeout> | undefined
+	let onAbort: (() => void) | undefined
+	const deadline = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new JsonLimitError("timeout", "request body timed out")),
+			Math.max(1, options.timeoutMs ?? config.requestBodyTimeoutMs))
+		if (options.signal) {
+			onAbort = () => reject(options.signal!.reason ?? new DOMException("aborted", "AbortError"))
+			if (options.signal.aborted) onAbort()
+			else options.signal.addEventListener("abort", onAbort, { once: true })
+		}
+	})
 	try {
 		for (;;) {
-			const { done, value } = await reader.read()
+			const { done, value } = await Promise.race([reader.read(), deadline])
 			if (done) break
 			if (!value) continue
 			total += value.byteLength
@@ -161,7 +184,14 @@ export async function readLimitedText(
 			}
 			chunks.push(value)
 		}
+	} catch (error) {
+		// A hostile source's cancellation promise is not allowed to hold up an
+		// already determined timeout or size error.
+		void reader.cancel(error).catch(() => {})
+		throw error
 	} finally {
+		clearTimeout(timer)
+		if (onAbort) options.signal?.removeEventListener("abort", onAbort)
 		reader.releaseLock()
 	}
 	const merged = new Uint8Array(total)
@@ -170,5 +200,5 @@ export async function readLimitedText(
 		merged.set(chunk, offset)
 		offset += chunk.byteLength
 	}
-	return new TextDecoder().decode(merged)
+	return merged
 }

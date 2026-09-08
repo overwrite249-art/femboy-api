@@ -212,7 +212,8 @@ test("the network fence outranks a valid credential", async () => {
 		})
 		assert.equal(allowed.status, 200)
 	} finally {
-		process.env.ADMIN_ALLOWED_CIDRS = previous
+		if (previous === undefined) delete process.env.ADMIN_ALLOWED_CIDRS
+		else process.env.ADMIN_ALLOWED_CIDRS = previous
 	}
 })
 
@@ -431,9 +432,12 @@ test("an open redirect cannot be smuggled through the OAuth return path", async 
 		const state = await (await oauthStates()).findOne({ _id: stateId })
 		assert.equal(state?.redirect, "/console")
 	} finally {
-		process.env.GITHUB_CLIENT_ID = previous.id
-		process.env.GITHUB_CLIENT_SECRET = previous.secret
-		process.env.PUBLIC_BASE_URL = previous.base
+		if (previous.id === undefined) delete process.env.GITHUB_CLIENT_ID
+		else process.env.GITHUB_CLIENT_ID = previous.id
+		if (previous.secret === undefined) delete process.env.GITHUB_CLIENT_SECRET
+		else process.env.GITHUB_CLIENT_SECRET = previous.secret
+		if (previous.base === undefined) delete process.env.PUBLIC_BASE_URL
+		else process.env.PUBLIC_BASE_URL = previous.base
 	}
 })
 
@@ -455,8 +459,11 @@ test("a replayed OAuth state is refused", async () => {
 		// No network call is attempted: the state is checked first.
 		assert.equal(response.status, 403)
 	} finally {
-		process.env.GITHUB_CLIENT_ID = previous.id
-		process.env.GITHUB_CLIENT_SECRET = previous.secret
-		process.env.PUBLIC_BASE_URL = previous.base
+		if (previous.id === undefined) delete process.env.GITHUB_CLIENT_ID
+		else process.env.GITHUB_CLIENT_ID = previous.id
+		if (previous.secret === undefined) delete process.env.GITHUB_CLIENT_SECRET
+		else process.env.GITHUB_CLIENT_SECRET = previous.secret
+		if (previous.base === undefined) delete process.env.PUBLIC_BASE_URL
+		else process.env.PUBLIC_BASE_URL = previous.base
 	}
 })

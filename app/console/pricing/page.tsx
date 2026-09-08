@@ -4,7 +4,16 @@ import { useState } from "react"
 import type { FormEvent } from "react"
 
 import { api } from "../api.ts"
-import { Callout, ErrorNote, Loading, Panel, formatNumber, useApi } from "../ui.tsx"
+import { useConfirm, useToast } from "../../components/interface.tsx"
+import { PageHeader, RefreshButton } from "../ui.tsx"
+import {
+	Callout,
+	ErrorNote,
+	Loading,
+	Panel,
+	formatNumber,
+	useApi,
+} from "../ui.tsx"
 
 type Pricing = {
 	_id: string
@@ -19,24 +28,45 @@ type Mapping = { _id: string; from: string; to: string; channelId?: string }
 type GroupRatio = { _id: string; ratio: number; description?: string }
 
 export default function PricingPage() {
+	const confirm = useConfirm()
+	const notify = useToast()
 	const pricing = useApi<{ pricing: Pricing[] }>("/api/admin/pricing")
 	const mappings = useApi<{ mappings: Mapping[] }>("/api/admin/mappings")
-	const ratios = useApi<{ groupRatios: GroupRatio[] }>("/api/admin/group-ratios")
+	const ratios = useApi<{ groupRatios: GroupRatio[] }>(
+		"/api/admin/group-ratios",
+	)
 
 	const [error, setError] = useState("")
 	const [busy, setBusy] = useState(false)
-	const [priceForm, setPriceForm] = useState({ model: "", modelRatio: "", completionRatio: "" })
+	const [priceForm, setPriceForm] = useState({
+		model: "",
+		modelRatio: "",
+		completionRatio: "",
+	})
 	const [mapForm, setMapForm] = useState({ from: "", to: "" })
 	const [ratioForm, setRatioForm] = useState({ group: "", ratio: "" })
 
 	async function run(action: () => Promise<unknown>, reload: () => void) {
+		if (busy) return
+		if (
+			!(await confirm({
+				title: "Update billing configuration?",
+				description:
+					"Pricing and model mappings affect future request costs and routing. Review the exact values before applying this change.",
+				action: "Apply change",
+			}))
+		)
+			return
 		setBusy(true)
 		setError("")
 		try {
 			await action()
 			reload()
+			notify("Billing configuration saved.")
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "the request was refused")
+			setError(
+				cause instanceof Error ? cause.message : "the request was refused",
+			)
 		} finally {
 			setBusy(false)
 		}
@@ -57,7 +87,10 @@ export default function PricingPage() {
 	function saveMapping(event: FormEvent) {
 		event.preventDefault()
 		void run(async () => {
-			await api.post("/api/admin/mappings", { from: mapForm.from, to: mapForm.to })
+			await api.post("/api/admin/mappings", {
+				from: mapForm.from,
+				to: mapForm.to,
+			})
 			setMapForm({ from: "", to: "" })
 		}, mappings.reload)
 	}
@@ -75,7 +108,24 @@ export default function PricingPage() {
 
 	return (
 		<>
-			<ErrorNote message={error || pricing.error} />
+			<PageHeader
+				eyebrow="BILLING RULES"
+				title="Pricing, with your own perspective."
+				description="Override model rates, map model names, and tailor price multipliers for routing groups."
+				actions={
+					<RefreshButton
+						onClick={() => {
+							pricing.reload()
+							mappings.reload()
+							ratios.reload()
+						}}
+						loading={pricing.loading || mappings.loading || ratios.loading}
+					/>
+				}
+			/>
+			<ErrorNote
+				message={error || pricing.error || mappings.error || ratios.error}
+			/>
 
 			<section className="section">
 				<Panel title="Model pricing" note="ratios, not dollars">
@@ -93,7 +143,9 @@ export default function PricingPage() {
 									<th className="num">Prompt</th>
 									<th className="num">Completion</th>
 									<th className="num hide-sm">Cached</th>
-									<th />
+									<th>
+										<span className="sr-only">Actions</span>
+									</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -102,7 +154,9 @@ export default function PricingPage() {
 										<td className="mono">{row._id}</td>
 										<td className="num">{row.modelRatio}</td>
 										<td className="num">{row.completionRatio}</td>
-										<td className="num hide-sm">{row.cachedRatio ?? "\u2014"}</td>
+										<td className="num hide-sm">
+											{row.cachedRatio ?? "\u2014"}
+										</td>
 										<td className="num">
 											<button
 												className="btn btn-small btn-danger"
@@ -112,7 +166,8 @@ export default function PricingPage() {
 													run(
 														() =>
 															api.remove(
-																"/api/admin/pricing/" + encodeURIComponent(row._id),
+																"/api/admin/pricing/" +
+																	encodeURIComponent(row._id),
 															),
 														pricing.reload,
 													)
@@ -138,7 +193,10 @@ export default function PricingPage() {
 								id="model"
 								value={priceForm.model}
 								onChange={(event) =>
-									setPriceForm((current) => ({ ...current, model: event.target.value }))
+									setPriceForm((current) => ({
+										...current,
+										model: event.target.value,
+									}))
 								}
 								placeholder="gpt-4o"
 								required
@@ -148,19 +206,30 @@ export default function PricingPage() {
 							<label htmlFor="modelRatio">Prompt ratio</label>
 							<input
 								id="modelRatio"
+								type="number"
+								min={0}
+								step="any"
 								value={priceForm.modelRatio}
 								onChange={(event) =>
-									setPriceForm((current) => ({ ...current, modelRatio: event.target.value }))
+									setPriceForm((current) => ({
+										...current,
+										modelRatio: event.target.value,
+									}))
 								}
 								placeholder="1.25"
 								required
 							/>
-							<span className="hint">Quota per prompt token before the group multiplier.</span>
+							<span className="hint">
+								Quota per prompt token before the group multiplier.
+							</span>
 						</div>
 						<div className="field">
 							<label htmlFor="completionRatio">Completion ratio</label>
 							<input
 								id="completionRatio"
+								type="number"
+								min={0}
+								step="any"
 								value={priceForm.completionRatio}
 								onChange={(event) =>
 									setPriceForm((current) => ({
@@ -174,8 +243,8 @@ export default function PricingPage() {
 						</div>
 						<div className="form-foot">
 							<span className="hint">
-								Prices are operator-entered only. Nothing is ever synced from a remote
-								catalogue.
+								Prices are operator-entered only. Nothing is ever synced from a
+								remote catalogue.
 							</span>
 							<button className="btn btn-primary" type="submit" disabled={busy}>
 								Save price
@@ -202,7 +271,10 @@ export default function PricingPage() {
 												type="button"
 												disabled={busy}
 												onClick={() =>
-													run(() => api.remove("/api/admin/mappings/" + row._id), mappings.reload)
+													run(
+														() => api.remove("/api/admin/mappings/" + row._id),
+														mappings.reload,
+													)
 												}
 											>
 												Remove
@@ -220,7 +292,10 @@ export default function PricingPage() {
 								id="from"
 								value={mapForm.from}
 								onChange={(event) =>
-									setMapForm((current) => ({ ...current, from: event.target.value }))
+									setMapForm((current) => ({
+										...current,
+										from: event.target.value,
+									}))
 								}
 								required
 							/>
@@ -231,13 +306,18 @@ export default function PricingPage() {
 								id="to"
 								value={mapForm.to}
 								onChange={(event) =>
-									setMapForm((current) => ({ ...current, to: event.target.value }))
+									setMapForm((current) => ({
+										...current,
+										to: event.target.value,
+									}))
 								}
 								required
 							/>
 						</div>
 						<div className="form-foot">
-							<span className="hint">Billing still uses the requested name.</span>
+							<span className="hint">
+								Billing still uses the requested name.
+							</span>
 							<button className="btn" type="submit" disabled={busy}>
 								Add mapping
 							</button>
@@ -267,7 +347,10 @@ export default function PricingPage() {
 								id="group"
 								value={ratioForm.group}
 								onChange={(event) =>
-									setRatioForm((current) => ({ ...current, group: event.target.value }))
+									setRatioForm((current) => ({
+										...current,
+										group: event.target.value,
+									}))
 								}
 								placeholder="default"
 								required
@@ -277,16 +360,24 @@ export default function PricingPage() {
 							<label htmlFor="ratio">Ratio</label>
 							<input
 								id="ratio"
+								type="number"
+								min={0}
+								step="any"
 								value={ratioForm.ratio}
 								onChange={(event) =>
-									setRatioForm((current) => ({ ...current, ratio: event.target.value }))
+									setRatioForm((current) => ({
+										...current,
+										ratio: event.target.value,
+									}))
 								}
 								placeholder="1"
 								required
 							/>
 						</div>
 						<div className="form-foot">
-							<span className="hint">A ratio of 0.5 halves every price for that group.</span>
+							<span className="hint">
+								A ratio of 0.5 halves every price for that group.
+							</span>
 							<button className="btn" type="submit" disabled={busy}>
 								Save ratio
 							</button>

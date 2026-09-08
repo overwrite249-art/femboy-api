@@ -33,6 +33,14 @@ export async function listChannelKeys(channelId: string): Promise<ChannelKeyDoc[
 	return collection.find({ channelId, status: "enabled" }, { sort: { index: 1 }, limit: 100 })
 }
 
+/** Poll/follow-up operations must stay on the provider account that owns a job. */
+export async function selectChannelKey(channelId: string, keyId: string): Promise<SelectedKey> {
+	const chosen = await (await channelKeys()).findOne({ _id: keyId, channelId, status: "enabled" })
+	if (!chosen) throw configurationError("the task's original provider credential is unavailable")
+	const secret = await openSecret(chosen, config.channelKeyMaster)
+	return { keyId: chosen._id, secret, index: chosen.index, fingerprint: chosen.fingerprint }
+}
+
 /**
  * Picks the next credential for a channel, round-robin across invocations.
  *

@@ -4,6 +4,14 @@ import { useCallback, useEffect, useState } from "react"
 import type { ReactNode } from "react"
 
 import { api } from "./api.ts"
+import { CopyButton } from "../components/interface.tsx"
+import {
+	Inbox,
+	RefreshCw,
+	Search,
+	ChevronLeft,
+	ChevronRight,
+} from "lucide-react"
 
 /* ------------------------------------------------------------- formatting */
 
@@ -50,7 +58,9 @@ export function Panel(props: {
 		<div className="panel">
 			{hasHead ? (
 				<div className="panel-head">
-					{props.title ? <span className="panel-title">{props.title}</span> : null}
+					{props.title ? (
+						<span className="panel-title">{props.title}</span>
+					) : null}
 					{props.note ? <span className="panel-note">{props.note}</span> : null}
 					{props.actions}
 				</div>
@@ -64,10 +74,14 @@ export function StatCard(props: {
 	label: string
 	value: string
 	sub?: ReactNode
+	icon?: ReactNode
 }) {
 	return (
 		<div className="card">
-			<div className="card-label">{props.label}</div>
+			<div className="card-label">
+				{props.label}
+				{props.icon ? <span className="stat-icon">{props.icon}</span> : null}
+			</div>
 			<div className="card-value">{props.value}</div>
 			{props.sub ? <div className="card-sub">{props.sub}</div> : null}
 		</div>
@@ -76,7 +90,11 @@ export function StatCard(props: {
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "idle"
 
-export function Pill(props: { tone: Tone; children: ReactNode; dot?: boolean }) {
+export function Pill(props: {
+	tone: Tone
+	children: ReactNode
+	dot?: boolean
+}) {
 	return (
 		<span className={"pill pill-" + props.tone}>
 			{props.dot ? <span className="dot" /> : null}
@@ -87,7 +105,8 @@ export function Pill(props: { tone: Tone; children: ReactNode; dot?: boolean }) 
 
 export function statusTone(status: unknown): Tone {
 	const value = String(status ?? "").toLowerCase()
-	if (value === "enabled" || value === "healthy" || value === "unused") return "ok"
+	if (value === "enabled" || value === "healthy" || value === "unused")
+		return "ok"
 	if (value === "disabled" || value === "deleted") return "bad"
 	if (value === "used") return "idle"
 	return "info"
@@ -101,18 +120,33 @@ export function httpTone(status: unknown): Tone {
 	return "idle"
 }
 
-export function Callout(props: { tone: "ok" | "warn" | "bad"; children: ReactNode }) {
+export function Callout(props: {
+	tone: "ok" | "warn" | "bad"
+	children: ReactNode
+}) {
 	const glyph = props.tone === "ok" ? "\u2713" : "\u26a0"
 	return (
-		<div className={"callout callout-" + props.tone}>
-			<span className="callout-icon">{glyph}</span>
+		<div
+			className={"callout callout-" + props.tone}
+			role={props.tone === "bad" ? "alert" : undefined}
+		>
+			<span className="callout-icon" aria-hidden="true">
+				{glyph}
+			</span>
 			<div>{props.children}</div>
 		</div>
 	)
 }
 
 export function Empty(props: { children: ReactNode }) {
-	return <div className="empty">{props.children}</div>
+	return (
+		<div className="empty">
+			<span className="empty-icon">
+				<Inbox size={28} />
+			</span>
+			{props.children}
+		</div>
+	)
 }
 
 export function Loading(props: { rows?: number }) {
@@ -141,32 +175,25 @@ export function Bar(props: { value: number; total: number }) {
 
 /* A secret the server will never show again. Displayed once, with a copy
  * action, and an explicit warning that reloading loses it. */
-export function SecretOnce(props: { label: string; value: string; onDone: () => void }) {
-	const [copied, setCopied] = useState(false)
-
-	async function copy() {
-		try {
-			await navigator.clipboard.writeText(props.value)
-			setCopied(true)
-		} catch {
-			setCopied(false)
-		}
-	}
-
+export function SecretOnce(props: {
+	label: string
+	value: string
+	onDone: () => void
+}) {
 	return (
 		<div className="section">
 			<Callout tone="ok">
-				<strong>{props.label}</strong> is shown once. It is stored only as a digest,
-				so nobody can display it again, including you.
+				<strong>{props.label}</strong> is shown once. It is stored only as a
+				digest, so nobody can display it again, including you.
 			</Callout>
 			<div className="secret">
 				<span>{props.value}</span>
 			</div>
 			<div className="form-foot">
-				<span className="hint">{copied ? "Copied to clipboard." : "\u00a0"}</span>
-				<button className="btn btn-small" type="button" onClick={copy}>
-					Copy
-				</button>
+				<span className="hint">
+					Store this key somewhere safe before continuing.
+				</span>
+				<CopyButton value={props.value} label="Copy key" />
 				<button className="btn btn-small" type="button" onClick={props.onDone}>
 					I have saved it
 				</button>
@@ -184,42 +211,160 @@ export type Resource<T> = {
 	reload: () => void
 }
 
-export function useApi<T>(path: string): Resource<T> {
-	const [data, setData] = useState<T | null>(null)
-	const [error, setError] = useState("")
-	const [loading, setLoading] = useState(true)
+export function useApi<T>(path: string | null): Resource<T> {
+	const [state, setState] = useState<{
+		path: string | null
+		data: T | null
+		error: string
+		loading: boolean
+	}>({ path: null, data: null, error: "", loading: false })
 	const [nonce, setNonce] = useState(0)
-
-	const reload = useCallback(() => {
-		setNonce((value) => value + 1)
-	}, [])
-
+	const reload = useCallback(() => setNonce((value) => value + 1), [])
 	useEffect(() => {
-		let cancelled = false
-		setLoading(true)
+		if (!path) {
+			setState({ path: null, data: null, error: "", loading: false })
+			return
+		}
+		const controller = new AbortController()
+		setState((current) => ({
+			path,
+			data: current.path === path ? current.data : null,
+			error: "",
+			loading: true,
+		}))
 		api
-			.get<T>(path)
-			.then((value) => {
-				if (cancelled) return
-				setData(value)
-				setError("")
+			.get<T>(path, controller.signal)
+			.then((data) => {
+				if (!controller.signal.aborted)
+					setState({ path, data, error: "", loading: false })
 			})
 			.catch((cause: unknown) => {
-				if (cancelled) return
-				setError(cause instanceof Error ? cause.message : "the request was refused")
+				if (!controller.signal.aborted)
+					setState((current) => ({
+						...current,
+						path,
+						error:
+							cause instanceof Error
+								? cause.message
+								: "The request was refused.",
+						loading: false,
+					}))
 			})
-			.finally(() => {
-				if (!cancelled) setLoading(false)
-			})
-		return () => {
-			cancelled = true
-		}
+		return () => controller.abort()
 	}, [path, nonce])
-
-	return { data, error, loading, reload }
+	return state.path === path
+		? { data: state.data, error: state.error, loading: state.loading, reload }
+		: { data: null, error: "", loading: Boolean(path), reload }
 }
 
 export function ErrorNote(props: { message: string }) {
 	if (!props.message) return null
 	return <Callout tone="bad">{props.message}</Callout>
+}
+
+export function PageHeader({
+	eyebrow,
+	title,
+	description,
+	actions,
+}: {
+	eyebrow?: string
+	title: string
+	description: string
+	actions?: ReactNode
+}) {
+	return (
+		<div className="page-heading">
+			<div>
+				{eyebrow ? <span className="eyebrow">{eyebrow}</span> : null}
+				<h1>{title}</h1>
+				<p>{description}</p>
+			</div>
+			{actions ? <div className="heading-actions">{actions}</div> : null}
+		</div>
+	)
+}
+export function RefreshButton({
+	onClick,
+	loading = false,
+}: {
+	onClick: () => void
+	loading?: boolean
+}) {
+	return (
+		<button
+			type="button"
+			className="btn btn-small"
+			onClick={onClick}
+			disabled={loading}
+		>
+			<RefreshCw size={16} className={loading ? "spin" : ""} />
+			Refresh
+		</button>
+	)
+}
+export function SearchInput({
+	value,
+	onChange,
+	placeholder = "Search…",
+	label = "Search records",
+}: {
+	value: string
+	onChange: (value: string) => void
+	placeholder?: string
+	label?: string
+}) {
+	return (
+		<label className="search-field">
+			<Search size={18} />
+			<span className="sr-only">{label}</span>
+			<input
+				type="search"
+				value={value}
+				onChange={(event) => onChange(event.target.value)}
+				placeholder={placeholder}
+			/>
+		</label>
+	)
+}
+export function Pagination({
+	page,
+	hasMore,
+	loading,
+	onPage,
+	count,
+}: {
+	page: number
+	hasMore: boolean
+	loading: boolean
+	onPage: (page: number) => void
+	count: number
+}) {
+	return (
+		<div className="pagination">
+			<span className="hint">
+				Page {page + 1} · {count} records on this page
+			</span>
+			<div>
+				<button
+					type="button"
+					className="btn btn-small"
+					disabled={page === 0 || loading}
+					onClick={() => onPage(page - 1)}
+				>
+					<ChevronLeft size={16} />
+					Previous
+				</button>
+				<button
+					type="button"
+					className="btn btn-small"
+					disabled={!hasMore || loading}
+					onClick={() => onPage(page + 1)}
+				>
+					Next
+					<ChevronRight size={16} />
+				</button>
+			</div>
+		</div>
+	)
 }

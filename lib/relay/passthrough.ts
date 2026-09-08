@@ -35,10 +35,12 @@ import { buildUpstreamHeaders, filterDownstreamHeaders } from "../http/headers.t
 import { errorResponse } from "../http/respond.ts"
 import { GatewayError, fromUpstream, invalidRequest } from "../http/errors.ts"
 import { asRecord, asString, safeJsonParse } from "../util/json.ts"
-import { JsonLimitError } from "../util/json.ts"
+import { readLimitedBytes } from "../util/json.ts"
+export { readLimitedBytes } from "../util/json.ts"
 import { nowMs } from "../util/time.ts"
 import { dialectFor, providerAuthHeaders, upstreamUrlFor } from "../transform/index.ts"
 import type { Endpoint } from "../transform/index.ts"
+import { redactProviderValue, sanitizeProviderError } from "../http/redact.ts"
 
 export type PassthroughUpstream = (
 	url: string,
@@ -67,37 +69,6 @@ export type PassthroughInput = {
  * Reads a body with the ceiling applied during the read, so an oversized
  * upload is refused while it is still arriving (GW-008).
  */
-export async function readLimitedBytes(
-	body: ReadableStream<Uint8Array> | null,
-	maxBytes: number,
-): Promise<Uint8Array> {
-	if (!body) return new Uint8Array(0)
-	const reader = body.getReader()
-	const chunks: Uint8Array[] = []
-	let total = 0
-	try {
-		for (;;) {
-			const { done, value } = await reader.read()
-			if (done) break
-			if (!value) continue
-			total += value.byteLength
-			if (total > maxBytes) {
-				throw new JsonLimitError("bytes", `payload exceeds ${maxBytes} bytes`)
-			}
-			chunks.push(value)
-		}
-	} finally {
-		reader.releaseLock()
-	}
-	const merged = new Uint8Array(total)
-	let offset = 0
-	for (const chunk of chunks) {
-		merged.set(chunk, offset)
-		offset += chunk.byteLength
-	}
-	return merged
-}
-
 /**
  * Pulls the model out of a multipart body without rebuilding it. Parsing a
  * copy and forwarding the original avoids any chance of the two disagreeing.
@@ -215,13 +186,13 @@ export async function relayPassthrough(input: PassthroughInput): Promise<Respons
 
 				if (!response.ok) {
 					const detail = await readCappedText(response).catch(() => "")
-					throw fromUpstream(response.status, detail, context.channel._id)
+					throw fromUpstream(response.status, sanitizeProviderError(detail, context.key.secret), context.channel._id)
 				}
-				return { response, wire, mappedModel: context.model.mapped }
+				return { response, wire, mappedModel: context.model.mapped, secret: context.key.secret }
 			},
 		)
 
-		const { response, mappedModel } = outcome.value
+		const { response, mappedModel, secret } = outcome.value
 		const downstream = filterDownstreamHeaders(response.headers)
 		downstream.set("x-request-id", requestId)
 
@@ -236,19 +207,21 @@ export async function relayPassthrough(input: PassthroughInput): Promise<Respons
 			const text = await readCappedText(response)
 			payload = text
 			try {
-				const parsed = asRecord(JSON.parse(text))
+				const parsed = redactProviderValue(asRecord(safeJsonParse(text, { maxBytes: config.maxUpstreamResponseBytes })), secret)
+				payload = JSON.stringify(parsed)
 				const reported = normalizeUsage(parsed.usage, semantic)
 				if (reported.promptTokens > 0 || reported.completionTokens > 0) usage = reported
 			} catch {
-				// Not every provider returns JSON it claims to; bill the estimate.
+				// Do not forward a malformed "JSON" body verbatim with a key echo.
+				payload = JSON.stringify({ error: "upstream returned invalid JSON" })
 			}
 		} else {
 			payload = await response.arrayBuffer()
 		}
 
 		const quota = computeQuota(usage, pricing, groupRatio, billedModel).quota
-		await finalizeQuota(identity, requestId, quota).catch(() => {})
 		reserved = false
+		await finalizeQuota(identity, requestId, quota)
 		await chargeTokenBudget(identity, usage.completionTokens).catch(() => {})
 		await recordUsage(
 			{

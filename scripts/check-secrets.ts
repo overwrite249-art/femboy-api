@@ -40,7 +40,7 @@ const TEXT_EXTENSIONS = [
 type Finding = { file: string; line: number; rule: string; excerpt: string }
 
 const RULES: Array<{ name: string; pattern: RegExp }> = [
-	{ name: "relay-key", pattern: /sk-[A-Za-z0-9]{24,}/ },
+	{ name: "relay-key", pattern: /\bsk-[A-Za-z0-9]{24,}/ },
 	{ name: "openai-project-key", pattern: /sk-proj-[A-Za-z0-9_-]{20,}/ },
 	{ name: "anthropic-key", pattern: /sk-ant-[A-Za-z0-9_-]{20,}/ },
 	{ name: "google-key", pattern: /AIza[0-9A-Za-z_-]{35}/ },
