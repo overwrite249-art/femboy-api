@@ -18,22 +18,28 @@
  *    can change at will.
  */
 
-import { config } from "../config/env.ts"
+import { config, assertProductionReady } from "../config/env.ts"
 import { oauthStates, users } from "../db/index.ts"
 import type { OAuthStateDoc, UserDoc } from "../db/types.ts"
 import { ErrorCode, GatewayError, forbidden, invalidRequest } from "../http/errors.ts"
 import { getClientIp } from "../http/headers.ts"
+import { safeRedirect } from "../http/redirect.ts"
 import { hashIp } from "../http/redact.ts"
 import { errorResponse, jsonResponse } from "../http/respond.ts"
-import { redisDel, redisGetJson, redisSetJson } from "../redis/client.ts"
-import { randomHex } from "../util/crypto.ts"
+import { enforceAttemptLimit } from "../ratelimit/index.ts"
+import { randomHex, timingSafeEqualHex } from "../util/crypto.ts"
 import { asRecord, readLimitedText, safeJsonParse } from "../util/json.ts"
 import { recordAudit } from "./audit.ts"
-import { assertPasswordAcceptable, hashPassword, verifyPassword } from "./password.ts"
+import { assertPasswordAcceptable, hashPassword, needsPasswordUpgrade, verifyPassword } from "./password.ts"
 import {
 	clearedSessionCookies,
+	assertCsrf,
 	createSession,
+	oauthStateCookie,
+	OAUTH_STATE_COOKIE,
+	readCookie,
 	readSession,
+	revokeSession,
 	sessionCookies,
 	withCookies,
 } from "./session.ts"
@@ -60,18 +66,6 @@ function configurationError(message: string): GatewayError {
 		status: 503,
 		message,
 	})
-}
-
-/**
- * Only local paths survive. A value like `//evil.example/x` is a protocol-
- * relative URL that browsers treat as another origin, which is why the second
- * character is checked too.
- */
-function safeRedirect(value: string | null): string {
-	if (!value) return "/console"
-	if (!value.startsWith("/") || value.startsWith("//")) return "/console"
-	if (value.includes("\\") || value.includes("\n")) return "/console"
-	return value.slice(0, 500)
 }
 
 function redirectTo(location: string, cookies: string[] = []): Response {
@@ -113,10 +107,8 @@ async function login(req: Request): Promise<Response> {
 	if (!username || !password) throw invalidRequest("username and password are required")
 
 	const key = attemptKey(ipHash)
-	const attempts = (await redisGetJson<{ n: number }>(key))?.n ?? 0
-	if (attempts >= MAX_LOGIN_ATTEMPTS) {
-		throw forbidden("too many sign-in attempts, try again later")
-	}
+	await enforceAttemptLimit(key, MAX_LOGIN_ATTEMPTS, ATTEMPT_WINDOW_SEC,
+		"too many sign-in attempts, try again later")
 
 	const user = await (await users()).findOne({ username })
 	// Verify against whatever we have, including nothing: verifyPassword still
@@ -125,7 +117,6 @@ async function login(req: Request): Promise<Response> {
 	const matched = await verifyPassword(password, user ?? {})
 
 	if (!user || !matched || user.status !== "enabled") {
-		await redisSetJson(key, { n: attempts + 1 }, ATTEMPT_WINDOW_SEC)
 		await recordAudit({
 			actorId: user?._id ?? "unknown",
 			actorRole: user?.role ?? "user",
@@ -138,7 +129,14 @@ async function login(req: Request): Promise<Response> {
 		throw forbidden("those credentials are not valid")
 	}
 
-	await redisDel(key)
+	if (needsPasswordUpgrade(user)) {
+		const upgraded = await hashPassword(password)
+		// Never overwrite a credential changed concurrently by another operation.
+		await (await users()).updateOne(
+			{ _id: user._id, passwordHash: user.passwordHash, passwordSalt: user.passwordSalt },
+			{ $set: upgraded },
+		)
+	}
 	const session = await createSession(user)
 	await (await users()).updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } })
 	await recordAudit({
@@ -161,13 +159,19 @@ async function register(req: Request): Promise<Response> {
 		throw forbidden("self-registration is disabled on this deployment")
 	}
 	const body = await readBody(req)
+	const ipHash = await hashIp(getClientIp(req.headers))
+	await enforceAttemptLimit(`register:att:${ipHash}`, 5, ATTEMPT_WINDOW_SEC,
+		"too many registration attempts, try again later")
 	const password = assertPasswordAcceptable(body.password)
-	const user = await createUser({ ...body, role: "user" })
 	const credentials = await hashPassword(password)
-	await (await users()).updateOne(
-		{ _id: user._id },
-		{ $set: { passwordHash: credentials.passwordHash, passwordSalt: credentials.passwordSalt } },
-	)
+	// Public input is an allowlist, never a control-plane object with one field
+	// overridden. Quota, groups, status and future authority fields stay private.
+	const user = await createUser({
+		username: body.username,
+		displayName: body.displayName,
+		email: body.email,
+		role: "user",
+	}, credentials)
 
 	const session = await createSession(user)
 	return withCookies(
@@ -179,6 +183,8 @@ async function register(req: Request): Promise<Response> {
 async function logout(req: Request): Promise<Response> {
 	const session = await readSession(req)
 	if (session) {
+		await assertCsrf(req, session)
+		await revokeSession(session)
 		await recordAudit({
 			actorId: session.sub,
 			actorRole: session.role,
@@ -217,6 +223,9 @@ function githubConfigured(): void {
 
 async function githubStart(req: Request): Promise<Response> {
 	githubConfigured()
+	const ipHash = await hashIp(getClientIp(req.headers))
+	await enforceAttemptLimit(`oauth:att:${ipHash}`, 20, ATTEMPT_WINDOW_SEC,
+		"too many sign-in attempts, try again later")
 	const url = new URL(req.url)
 	const state: OAuthStateDoc = {
 		_id: randomHex(16),
@@ -233,7 +242,7 @@ async function githubStart(req: Request): Promise<Response> {
 	authorize.searchParams.set("scope", "read:user user:email")
 	authorize.searchParams.set("state", state._id)
 	authorize.searchParams.set("allow_signup", "false")
-	return redirectTo(authorize.toString())
+	return redirectTo(authorize.toString(), [oauthStateCookie(state._id, STATE_TTL_MS / 1000)])
 }
 
 async function exchangeCode(code: string): Promise<string> {
@@ -282,16 +291,19 @@ async function githubCallback(req: Request): Promise<Response> {
 	const code = url.searchParams.get("code") ?? ""
 	const stateId = url.searchParams.get("state") ?? ""
 	if (!code || !stateId) throw invalidRequest("missing code or state")
+	const browserState = readCookie(req, OAUTH_STATE_COOKIE)
+	if (!/^[a-f0-9]{32}$/.test(stateId) || !timingSafeEqualHex(stateId, browserState)) {
+		throw forbidden("that sign-in attempt is no longer valid")
+	}
 
 	const states = await oauthStates()
-	const state = await states.findOne({ _id: stateId })
-	// Delete before doing anything expensive: a replayed callback must find
-	// nothing, even if the exchange below fails.
-	await states.deleteOne({ _id: stateId })
+	// Claim atomically. Separate find/delete calls let concurrent callbacks both
+	// exchange the code. Expiry is in the predicate, not a post-claim check.
+	const state = await states.findOneAndUpdate(
+		{ _id: stateId, consumedAt: { $exists: false }, expiresAt: { $gt: new Date() } },
+		{ $set: { consumedAt: new Date() } },
+	)
 	if (!state) throw forbidden("that sign-in attempt is no longer valid")
-	if (new Date(state.expiresAt).getTime() < Date.now()) {
-		throw forbidden("that sign-in attempt expired")
-	}
 
 	const profile = await fetchGithubUser(await exchangeCode(code))
 	const collection = await users()
@@ -310,9 +322,8 @@ async function githubCallback(req: Request): Promise<Response> {
 			displayName: profile.name || username,
 			email: profile.email,
 			role: "user",
-		})
-		await collection.updateOne({ _id: created._id }, { $set: { githubId: profile.id } })
-		user = { ...created, githubId: profile.id }
+		}, { githubId: profile.id })
+		user = created
 		await recordAudit({
 			actorId: created._id,
 			actorRole: "user",
@@ -336,7 +347,10 @@ async function githubCallback(req: Request): Promise<Response> {
 		ipHash,
 	})
 
-	return redirectTo(state.redirect || "/console", sessionCookies(session.token, session.csrf))
+	return redirectTo(safeRedirect(state.redirect), [
+		...sessionCookies(session.token, session.csrf),
+		oauthStateCookie("", 0),
+	])
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +360,7 @@ export async function handleAuthRequest(req: Request, segments: string[]): Promi
 	const [head = "", second = ""] = segments
 
 	try {
+		assertProductionReady()
 		if (head === "login" && method === "POST") return await login(req)
 		if (head === "register" && method === "POST") return await register(req)
 		if (head === "logout" && method === "POST") return await logout(req)

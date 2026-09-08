@@ -101,7 +101,8 @@ test("rotating the secret invalidates existing sessions", async () => {
 	try {
 		assert.equal(await readSession(request({ [SESSION_COOKIE]: token })), null)
 	} finally {
-		process.env.SESSION_SECRET = previous
+		if (previous === undefined) delete process.env.SESSION_SECRET
+		else process.env.SESSION_SECRET = previous
 	}
 })
 
@@ -111,7 +112,8 @@ test("a blank secret fails closed", async () => {
 	try {
 		await assert.rejects(createSession(admin), /SESSION_SECRET is not configured/)
 	} finally {
-		process.env.SESSION_SECRET = previous
+		if (previous === undefined) delete process.env.SESSION_SECRET
+		else process.env.SESSION_SECRET = previous
 	}
 })
 
@@ -176,7 +178,8 @@ test("the CSRF token is not derivable from the visible session id", async () => 
 	try {
 		assert.notEqual(await csrfTokenFor(payload.sid), csrf)
 	} finally {
-		process.env.SESSION_SECRET = previous
+		if (previous === undefined) delete process.env.SESSION_SECRET
+		else process.env.SESSION_SECRET = previous
 	}
 })
 
@@ -204,7 +207,8 @@ test("a foreign origin is refused outright", async () => {
 			payload,
 		)
 	} finally {
-		process.env.PUBLIC_BASE_URL = previous
+		if (previous === undefined) delete process.env.PUBLIC_BASE_URL
+		else process.env.PUBLIC_BASE_URL = previous
 	}
 })
 

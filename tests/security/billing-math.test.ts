@@ -243,6 +243,9 @@ test("pricing overrides come from the database and are cached", async () => {
 		_id: "gpt-4o",
 		modelRatio: 99,
 		completionRatio: 2,
+		usageSemantic: "inclusive",
+		source: "manual",
+		updatedAt: new Date(),
 	})
 	const overridden = await getModelPricing("gpt-4o")
 	assert.equal(overridden.modelRatio, 99)

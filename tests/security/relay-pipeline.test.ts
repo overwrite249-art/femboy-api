@@ -18,7 +18,7 @@ import { relay } from "../../lib/relay/pipeline.ts"
 import type { RelayInput, UpstreamCall } from "../../lib/relay/pipeline.ts"
 import type { AuthContext } from "../../lib/auth/authenticate.ts"
 
-const UPSTREAM_SECRET = "sk-upstream-credential"
+const UPSTREAM_SECRET = "opaque-provider-credential-fixture"
 
 function channelDoc(type = "openai", baseUrl = "https://api.example.com"): ChannelDoc {
 	return {
@@ -58,6 +58,7 @@ async function fresh(type = "openai"): Promise<void> {
 		group: "default",
 		quota: 1_000_000,
 		usedQuota: 0,
+		quotaLedgerVersion: 2,
 		requestCount: 0,
 		createdAt: new Date(),
 		updatedAt: new Date(),
@@ -74,6 +75,7 @@ async function fresh(type = "openai"): Promise<void> {
 		status: "enabled",
 		quota: 1_000_000,
 		usedQuota: 0,
+		quotaLedgerVersion: 2,
 		unlimitedQuota: false,
 		expiresAt: null,
 		allowedIps: [],
@@ -183,6 +185,57 @@ const completion = {
 	choices: [{ index: 0, message: { role: "assistant", content: "hello" }, finish_reason: "stop" }],
 	usage: { prompt_tokens: 1000, completion_tokens: 500, total_tokens: 1500 },
 }
+
+test("opaque provider credentials are removed from real relay error paths", async () => {
+	await fresh()
+	const upstream = jsonUpstream({ error: { message: `invalid credential ${UPSTREAM_SECRET}` } }, 401)
+	await assert.rejects(relay(baseInput({ upstream: upstream.call })), (error: unknown) => {
+		assert.ok(!String(error).includes(UPSTREAM_SECRET))
+		return true
+	})
+})
+
+test("a successful JSON response cannot reflect the shared provider credential", async () => {
+	await fresh()
+	const upstream = jsonUpstream({
+		...completion,
+		choices: [{ index: 0, message: { role: "assistant", content: UPSTREAM_SECRET }, finish_reason: "stop" }],
+	})
+	const response = await relay(baseInput({ upstream: upstream.call }))
+	assert.ok(!(await response.text()).includes(UPSTREAM_SECRET))
+})
+
+test("a streamed credential echo is removed before framing reaches the client", async () => {
+	await fresh()
+	const upstream = sseUpstream([
+		`data: ${JSON.stringify({ id: "r", choices: [{ index: 0, delta: { content: UPSTREAM_SECRET } }] })}\n\n`,
+		"data: [DONE]\n\n",
+	])
+	const response = await relay(baseInput({ upstream, stream: true }))
+	assert.ok(!(await response.text()).includes(UPSTREAM_SECRET))
+})
+
+test("a provider's DONE sentinel closes an otherwise-open upstream stream", async () => {
+	await fresh()
+	let canceled = false
+	const upstream: UpstreamCall = async () => new Response(new ReadableStream({
+		start(controller) { controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n")) },
+		cancel() { canceled = true },
+	}))
+	const response = await relay(baseInput({ upstream, stream: true }))
+	const reader = response.body!.getReader()
+	let timer: ReturnType<typeof setTimeout> | undefined
+	try {
+		await Promise.race([
+			(async () => { while (!(await reader.read()).done) { /* drain */ } })(),
+			new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("stream did not finish")), 500) }),
+		])
+		assert.equal(canceled, true)
+	} finally {
+		clearTimeout(timer)
+		void reader.cancel().catch(() => {})
+	}
+})
 
 function baseInput(overrides: Partial<RelayInput> = {}): RelayInput {
 	return {

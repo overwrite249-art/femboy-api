@@ -260,6 +260,34 @@ redis.call('EXPIRE', key, cooldown * 10)
 return {state, fails}
 `
 
+/** Request-owned leases; expiry and admission are one atomic operation. */
+export const CONCURRENCY_LUA = `
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local now = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now)
+local count = redis.call('ZCARD', key)
+if count >= limit then return {0, count} end
+redis.call('ZADD', key, now + ttl, ARGV[4])
+redis.call('PEXPIRE', key, ttl + 1000)
+return {1, count + 1}
+`
+
+export const RELEASE_LOCK_LUA = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return {redis.call('DEL', KEYS[1])}
+end
+return {0}
+`
+
+export const ACK_USAGE_LUA = `
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then return {0} end
+redis.call('LTRIM', KEYS[1], tonumber(ARGV[2]), -1)
+redis.call('DEL', KEYS[2])
+return {1}
+`
+
 export const SCRIPTS = {
 	tokenBucket: TOKEN_BUCKET_LUA,
 	fixedWindow: FIXED_WINDOW_LUA,
@@ -269,6 +297,9 @@ export const SCRIPTS = {
 	release: RELEASE_LUA,
 	nextKey: NEXT_KEY_LUA,
 	health: HEALTH_LUA,
+	concurrency: CONCURRENCY_LUA,
+	releaseLock: RELEASE_LOCK_LUA,
+	ackUsage: ACK_USAGE_LUA,
 } as const
 
 export type ScriptName = keyof typeof SCRIPTS

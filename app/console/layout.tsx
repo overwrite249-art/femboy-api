@@ -48,6 +48,7 @@ export default function ConsoleLayout(props: { children: ReactNode }) {
 	const router = useRouter()
 	const [user, setUser] = useState<ConsoleUser | null>(null)
 	const [checked, setChecked] = useState(false)
+	const [logoutError, setLogoutError] = useState("")
 
 	useEffect(() => {
 		let cancelled = false
@@ -65,8 +66,13 @@ export default function ConsoleLayout(props: { children: ReactNode }) {
 	}, [router, pathname])
 
 	async function leave() {
-		await signOut()
-		router.replace("/login")
+		setLogoutError("")
+		try {
+			await signOut()
+			router.replace("/login")
+		} catch {
+			setLogoutError("Sign-out failed. Your session may still be active; please retry.")
+		}
 	}
 
 	const initial = (user?.username ?? "?").slice(0, 1)
@@ -141,6 +147,7 @@ export default function ConsoleLayout(props: { children: ReactNode }) {
 				</header>
 
 				<div className="content">
+					{logoutError ? <p role="alert" className="auth-error">{logoutError}</p> : null}
 					{checked && !user ? (
 						<div className="empty">Redirecting to sign-in.</div>
 					) : (

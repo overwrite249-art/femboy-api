@@ -7,9 +7,8 @@
  * which keeps the dependency count at zero (the same constraint the rest of
  * `lib/` follows).
  *
- * 210,000 iterations is OWASP's 2023 floor for PBKDF2-HMAC-SHA256. It costs a
- * few hundred milliseconds server-side, which is acceptable for a sign-in and
- * expensive for an offline attacker with a stolen database.
+ * New hashes use a versioned 600,000-iteration format. Legacy 210,000-iteration
+ * hashes remain readable and are upgraded after a successful password login.
  *
  * Note what is NOT here: any way to get a password back. Only the derived bits
  * are stored, and comparison is constant-time so a near-miss reveals nothing.
@@ -18,7 +17,9 @@
 import { bytesToHex, randomHex, timingSafeEqualHex } from "../util/crypto.ts"
 import { invalidRequest } from "../http/errors.ts"
 
-export const PBKDF2_ITERATIONS = 210_000
+export const PBKDF2_ITERATIONS = 600_000
+const LEGACY_ITERATIONS = 210_000
+const HASH_PREFIX = "pbkdf2-sha256:600000:"
 export const SALT_BYTES = 16
 export const DERIVED_BITS = 256
 
@@ -29,7 +30,7 @@ const encoder = new TextEncoder()
 
 export type PasswordRecord = { passwordHash: string; passwordSalt: string }
 
-async function derive(password: string, saltHex: string): Promise<string> {
+async function derive(password: string, saltHex: string, iterations = PBKDF2_ITERATIONS): Promise<string> {
 	const key = await crypto.subtle.importKey(
 		"raw",
 		encoder.encode(password),
@@ -41,7 +42,7 @@ async function derive(password: string, saltHex: string): Promise<string> {
 		{
 			name: "PBKDF2",
 			salt: encoder.encode(saltHex) as BufferSource,
-			iterations: PBKDF2_ITERATIONS,
+			iterations,
 			hash: "SHA-256",
 		},
 		key,
@@ -71,7 +72,11 @@ export function assertPasswordAcceptable(password: unknown): string {
 export async function hashPassword(password: string): Promise<PasswordRecord> {
 	assertPasswordAcceptable(password)
 	const passwordSalt = randomHex(SALT_BYTES)
-	return { passwordHash: await derive(password, passwordSalt), passwordSalt }
+	return { passwordHash: HASH_PREFIX + await derive(password, passwordSalt), passwordSalt }
+}
+
+export function needsPasswordUpgrade(record: { passwordHash?: string }): boolean {
+	return /^[a-f0-9]{64}$/i.test(record.passwordHash ?? "")
 }
 
 /**
@@ -83,12 +88,20 @@ export async function verifyPassword(
 	password: string,
 	record: { passwordHash?: string; passwordSalt?: string },
 ): Promise<boolean> {
-	if (!record.passwordHash || !record.passwordSalt) {
+	if (typeof password !== "string" || password.length > MAX_LENGTH) return false
+	const legacy = needsPasswordUpgrade(record)
+	const digest = legacy ? record.passwordHash : record.passwordHash?.startsWith(HASH_PREFIX)
+		? record.passwordHash.slice(HASH_PREFIX.length) : ""
+	if (!digest || !/^[a-f0-9]{64}$/i.test(digest) ||
+		!record.passwordSalt || record.passwordSalt.length > 128) {
 		// Still burn the time, so account enumeration cannot be timed.
 		await derive(password, "absent")
 		return false
 	}
-	if (typeof password !== "string" || password.length > MAX_LENGTH) return false
-	const candidate = await derive(password, record.passwordSalt)
-	return timingSafeEqualHex(candidate, record.passwordHash)
+	const candidate = await derive(password, record.passwordSalt, legacy ? LEGACY_ITERATIONS : PBKDF2_ITERATIONS)
+	if (legacy) {
+		// Keep total derivation work comparable for absent, legacy and new users.
+		await derive(password, "legacy-timing-padding", PBKDF2_ITERATIONS - LEGACY_ITERATIONS)
+	}
+	return timingSafeEqualHex(candidate, digest)
 }

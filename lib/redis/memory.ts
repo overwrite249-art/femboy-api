@@ -261,6 +261,16 @@ export class MemoryRedis {
 			}
 			case "ZCARD":
 				return (this.zset(a[1]) ?? []).length
+			case "ZREM": {
+				const z = this.zset(a[1])
+				if (!z) return 0
+				const members = new Set(a.slice(2))
+				const before = z.length
+				const kept = z.filter((entry) => !members.has(entry.member))
+				z.length = 0
+				z.push(...kept)
+				return before - z.length
+			}
 			case "ZREMRANGEBYSCORE": {
 				const z = this.zset(a[1])
 				if (!z) return 0

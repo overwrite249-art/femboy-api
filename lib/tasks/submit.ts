@@ -24,12 +24,15 @@ import {
 import { channels } from "../db/index.ts"
 import type { ChannelDoc, TaskPlatform } from "../db/types.ts"
 import { buildUpstreamHeaders, filterDownstreamHeaders } from "../http/headers.ts"
-import { GatewayError, fromUpstream, noChannelAvailable } from "../http/errors.ts"
+import { GatewayError, forbidden, fromUpstream, malformedUpstreamBody, noChannelAvailable } from "../http/errors.ts"
+import { redactProviderValue, sanitizeProviderError } from "../http/redact.ts"
+import { asRecord, safeJsonParse } from "../util/json.ts"
+import { isTaskSubmitPathAllowed, prepareTaskBody } from "./policy.ts"
 import { errorResponse, jsonResponse } from "../http/respond.ts"
 import { finalizeQuota, preConsumedQuota, releaseQuota, reserveQuota } from "../quota/index.ts"
 import { enforceRequestLimits, enforceSuccessWindow } from "../ratelimit/index.ts"
 import { readLimitedBytes } from "../relay/passthrough.ts"
-import { pickChannelKey } from "../routing/keys.ts"
+import { pickChannelKey, selectChannelKey } from "../routing/keys.ts"
 import { providerAuthHeaders } from "../transform/index.ts"
 import type { Endpoint } from "../transform/index.ts"
 import { readCappedText, upstreamFetch } from "../upstream/fetch.ts"
@@ -65,14 +68,14 @@ export type TaskSubmitOptions = {
 
 function parseJsonObject(text: string): Record<string, unknown> {
 	try {
-		const parsed: unknown = JSON.parse(text)
+		const parsed: unknown = safeJsonParse(text, { maxBytes: config.maxUpstreamResponseBytes })
 		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
 			return parsed as Record<string, unknown>
 		}
 	} catch {
 		// Providers are not always honest about returning JSON.
 	}
-	return {}
+	throw malformedUpstreamBody()
 }
 
 async function candidateChannels(platform: string, group: string): Promise<ChannelDoc[]> {
@@ -118,8 +121,16 @@ export async function handleTaskSubmit(
 		await enforceRequestLimits(identity, auth.ipHash)
 		await enforceSuccessWindow(identity, requestId)
 
-		const bytes = await readLimitedBytes(req.body, config.maxRequestBodyBytes)
+		const rawBytes = await readLimitedBytes(req.body, config.maxRequestBodyBytes, { signal: req.signal })
 		const contentType = req.headers.get("content-type") ?? "application/json"
+		const prepared = await prepareTaskBody(rawBytes, contentType, identity, options.platform)
+		const bytes = prepared.bytes
+		const available = await candidateChannels(options.platform, group)
+		if (!available.length) throw noChannelAvailable(model, group)
+		const candidates = available.filter((channel) =>
+			isTaskSubmitPathAllowed(channel, options.platform, options.path) &&
+			(!prepared.channelId || channel._id === prepared.channelId))
+		if (!candidates.length) throw forbidden("this task submission path or reference channel is not allowed")
 
 		const billedModel = billedModelFor(model, model)
 		const { pricing, groupRatio } = await resolvePricing(billedModel, group)
@@ -131,25 +142,27 @@ export async function handleTaskSubmit(
 		let reserved = true
 
 		try {
-			const candidates = await candidateChannels(options.platform, group)
-			if (candidates.length === 0) throw noChannelAvailable(model, group)
-
 			const attempts = Math.min(candidates.length, Math.max(1, options.maxChannels ?? 3))
 			let response: Response | null = null
 			let used: ChannelDoc | null = null
 			let lastError: unknown = null
+			let usedSecret = ""
+			let usedKeyId = ""
 
 			for (let index = 0; index < attempts; index += 1) {
 				const channel = candidates[index]
 				if (!channel) break
+				let sent = false
 				try {
-					const key = await pickChannelKey(channel._id)
+					const key = prepared.channelKeyId
+						? await selectChannelKey(channel._id, prepared.channelKeyId) : await pickChannelKey(channel._id)
 					const headers = buildUpstreamHeaders({
 						clientHeaders: req.headers,
 						authHeaders: providerAuthHeaders(channel.type, key.secret),
 						channelHeaders: channel.headers,
 						contentType,
 					})
+					sent = true
 					const attempt = await upstreamFetch(
 						joinUrl(channel.baseUrl, options.path),
 						{ method: "POST", headers, body: bytes as unknown as BodyInit },
@@ -161,22 +174,29 @@ export async function handleTaskSubmit(
 					)
 					if (!attempt.ok) {
 						const detail = await readCappedText(attempt).catch(() => "")
-						throw fromUpstream(attempt.status, detail, channel._id)
+						throw fromUpstream(attempt.status, sanitizeProviderError(detail, key.secret), channel._id)
 					}
 					response = attempt
 					used = channel
+					usedSecret = key.secret
+					usedKeyId = key.keyId
 					break
 				} catch (cause) {
 					lastError = cause
+					// Task creation is not idempotent. An ambiguous transport
+					// failure must not submit/bill the same job to another channel.
+					if (sent) break
 				}
 			}
 
 			if (!response || !used) {
 				throw GatewayError.from(lastError ?? noChannelAvailable(model, group))
 			}
+			reserved = false
+			await finalizeQuota(identity, requestId, quota)
 
 			const text = await readCappedText(response)
-			const payload = parseJsonObject(text)
+			const payload = asRecord(redactProviderValue(parseJsonObject(text), usedSecret))
 			const upstreamTaskId = extractUpstreamTaskId(payload)
 
 			const task = await createTask({
@@ -185,6 +205,7 @@ export async function handleTaskSubmit(
 				userId: identity.userId,
 				tokenId: identity.tokenId,
 				channelId: used._id,
+				channelKeyId: usedKeyId,
 				model,
 				quota,
 				properties: { bytes: bytes.byteLength, contentType },
@@ -201,9 +222,6 @@ export async function handleTaskSubmit(
 					result: payload,
 				})
 			}
-
-			await finalizeQuota(identity, requestId, quota).catch(() => {})
-			reserved = false
 
 			await recordUsage(
 				{
@@ -254,7 +272,7 @@ export async function handleTaskSubmit(
 					endpoint: options.endpoint ?? "images.generations",
 					dialect: "openai",
 					stream: false,
-					quota: 0,
+					quota: reserved ? 0 : quota,
 					elapsedMs: nowMs() - startedAt,
 					status: "error",
 					errorCode: gatewayError.code,
@@ -279,6 +297,7 @@ export async function handleTaskFetch(
 	try {
 		const auth = await authenticate(req)
 		requestId = auth.requestId
+		await enforceRequestLimits(auth.identity, auth.ipHash)
 		const doc = await requireTask(taskId, auth.identity)
 		const body = view === "midjourney" ? mjTaskView(doc) : publicTask(doc)
 		return jsonResponse(body, { requestId })
@@ -292,6 +311,7 @@ export async function handleTaskList(req: Request): Promise<Response> {
 	try {
 		const auth = await authenticate(req)
 		requestId = auth.requestId
+		await enforceRequestLimits(auth.identity, auth.ipHash)
 		const url = new URL(req.url)
 		const rawLimit = Number(url.searchParams.get("limit") ?? "50")
 		const rows = await listTasks(auth.identity, {

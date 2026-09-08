@@ -112,9 +112,6 @@ export async function loadSession(): Promise<ConsoleUser | null> {
 }
 
 export async function signOut(): Promise<void> {
-	try {
-		await api.post("/api/auth/logout")
-	} catch {
-		// Signing out is best-effort: the cookie is cleared either way.
-	}
+	// A failed request has neither cleared nor revoked the HttpOnly cookie.
+	await api.post("/api/auth/logout")
 }

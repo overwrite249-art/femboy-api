@@ -11,7 +11,7 @@
  * at a time from a few thousand timed requests.
  */
 
-import { config } from "../config/env.ts"
+import { config, assertProductionReady } from "../config/env.ts"
 import { ErrorCode, GatewayError } from "../http/errors.ts"
 import { errorResponse, jsonResponse } from "../http/respond.ts"
 import { sha256Hex, timingSafeEqualHex } from "../util/crypto.ts"
@@ -24,6 +24,7 @@ function presentedSecret(req: Request): string {
 }
 
 export async function assertCronAuthorized(req: Request): Promise<void> {
+	assertProductionReady()
 	const secret = config.cronSecret
 	if (secret === "") {
 		// Fail closed. An unconfigured secret must not mean "open to everyone".

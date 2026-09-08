@@ -105,6 +105,7 @@ export function createSseParser(options: SseParserOptions = {}): SseParser {
 	let lastId: string | null = null
 	let retry: number | null = null
 	let pending = false
+	let eventBytes = 0
 
 	function dispatch(out: SseEvent[]): void {
 		if (!pending) return
@@ -120,9 +121,13 @@ export function createSseParser(options: SseParserOptions = {}): SseParser {
 		dataLines = []
 		retry = null
 		pending = false
+		eventBytes = 0
 	}
 
 	function handleLine(line: string, out: SseEvent[]): void {
+		if (Buffer.byteLength(line, "utf8") > maxLineBytes) {
+			throw payloadTooLarge(`upstream sent an SSE line over ${maxLineBytes} bytes`)
+		}
 		if (line === "") {
 			dispatch(out)
 			return
@@ -145,6 +150,8 @@ export function createSseParser(options: SseParserOptions = {}): SseParser {
 
 		switch (field) {
 			case "data":
+				eventBytes += Buffer.byteLength(value, "utf8") + 1
+				if (eventBytes > maxLineBytes) throw payloadTooLarge(`upstream SSE event exceeded ${maxLineBytes} bytes`)
 				dataLines.push(value)
 				pending = true
 				break
@@ -176,6 +183,8 @@ export function createSseParser(options: SseParserOptions = {}): SseParser {
 
 			let index = buffer.search(/\r\n|\n|\r/)
 			while (index !== -1) {
+				// A trailing CR may be the first half of CRLF in the next chunk.
+				if (buffer[index] === "\r" && index === buffer.length - 1) break
 				const line = buffer.slice(0, index)
 				const skip = buffer.startsWith("\r\n", index) ? 2 : 1
 				buffer = buffer.slice(index + skip)
@@ -184,7 +193,7 @@ export function createSseParser(options: SseParserOptions = {}): SseParser {
 			}
 
 			// Nothing has terminated the line yet. Bound what is held.
-			if (buffer.length > maxLineBytes) {
+			if (Buffer.byteLength(buffer.replace(/\r$/, ""), "utf8") > maxLineBytes) {
 				buffer = ""
 				throw payloadTooLarge(`upstream sent an SSE line over ${maxLineBytes} bytes`)
 			}
@@ -194,7 +203,7 @@ export function createSseParser(options: SseParserOptions = {}): SseParser {
 		flush(): SseEvent[] {
 			const out: SseEvent[] = []
 			if (buffer.length > 0) {
-				const line = buffer
+				const line = buffer.replace(/\r$/, "")
 				buffer = ""
 				handleLine(line, out)
 			}
@@ -248,6 +257,7 @@ export function sseEventStream(
 				for (;;) {
 					const { done, value } = await reader.read()
 					if (done) {
+						for (const event of parser.push(decoder.decode())) controller.enqueue(event)
 						for (const event of parser.flush()) controller.enqueue(event)
 						controller.close()
 						return
@@ -266,7 +276,7 @@ export function sseEventStream(
 			}
 		},
 		cancel(reason) {
-			return reader.cancel(reason)
+			void reader.cancel(reason).catch(() => {})
 		},
 	})
 }
@@ -299,7 +309,7 @@ export function encodeSseStream(
 			}
 		},
 		cancel(reason) {
-			return reader.cancel(reason)
+			void reader.cancel(reason).catch(() => {})
 		},
 	})
 }
@@ -323,11 +333,14 @@ export function createNdjsonParser(options: SseParserOptions = {}): {
 			let index = buffer.indexOf("\n")
 			while (index !== -1) {
 				const line = buffer.slice(0, index).trim()
+				if (Buffer.byteLength(line, "utf8") > maxLineBytes) {
+					throw payloadTooLarge(`upstream sent a line over ${maxLineBytes} bytes`)
+				}
 				buffer = buffer.slice(index + 1)
 				if (line !== "") out.push(line)
 				index = buffer.indexOf("\n")
 			}
-			if (buffer.length > maxLineBytes) {
+			if (Buffer.byteLength(buffer, "utf8") > maxLineBytes) {
 				buffer = ""
 				throw payloadTooLarge(`upstream sent a line over ${maxLineBytes} bytes`)
 			}

@@ -203,6 +203,10 @@ function azureSuffix(endpoint: Endpoint): string {
  * lib/http/headers.ts so there is one place that decides what leaves.
  */
 export function providerAuthHeaders(channelType: string, secret: string): Record<string, string> {
+	if (channelType === "midjourney") return { "mj-api-secret": secret }
+	if (["suno", "kling", "jimeng", "vidu", "dify", "video"].includes(channelType)) {
+		return { authorization: `Bearer ${secret}` }
+	}
 	switch (dialectFor(channelType)) {
 		case "anthropic":
 			return {

@@ -21,6 +21,8 @@ import { ErrorCode, GatewayError, rateLimited } from "../http/errors.ts"
 import { isDegraded, redisCommand, runScript } from "../redis/client.ts"
 import { K } from "../redis/keys.ts"
 import { nowMs } from "../util/time.ts"
+import { randomHex } from "../util/crypto.ts"
+import type { ScriptName } from "../redis/lua.ts"
 import type { Identity } from "../auth/authenticate.ts"
 
 export type LimitScope = "token" | "user" | "ip" | "channel"
@@ -39,6 +41,33 @@ function limiterUnavailable(): GatewayError {
 	})
 }
 
+async function limitScript(name: ScriptName, keys: string[], args: Array<string | number>): Promise<number[]> {
+	if (isDegraded()) throw limiterUnavailable()
+	try {
+		const result = await runScript(name, keys, args)
+		if (result.length < 2 || !result.every(Number.isFinite) || ![0, 1].includes(result[0])) {
+			throw new Error("invalid limiter response")
+		}
+		return result
+	} catch {
+		throw limiterUnavailable()
+	}
+}
+
+/** Charge attempts before expensive work; read/modify/write counters are racy. */
+export async function enforceAttemptLimit(
+	key: string, limit: number, windowSec: number, message: string,
+): Promise<void> {
+	if (isDegraded()) throw limiterUnavailable()
+	let result: number[]
+	try {
+		result = await limitScript("fixedWindow", [key], [limit, windowSec, 1])
+	} catch {
+		throw limiterUnavailable()
+	}
+	if (result[0] !== 1) throw rateLimited(message, windowSec)
+}
+
 /**
  * Consumes one slot from a token bucket.
  * `limit` is requests per minute; a limit of zero disables the check.
@@ -51,7 +80,7 @@ async function consumeBucket(
 	if (limitPerMinute <= 0) return { allowed: true, remaining: Number.POSITIVE_INFINITY }
 	const refillPerSecond = limitPerMinute / 60
 	const ttl = Math.max(60, Math.ceil(limitPerMinute / Math.max(refillPerSecond, 0.001)) + 60)
-	const result = await runScript("tokenBucket", [key], [limitPerMinute, refillPerSecond, nowMs(), cost, ttl])
+	const result = await limitScript("tokenBucket", [key], [limitPerMinute, refillPerSecond, nowMs(), cost, ttl])
 	return { allowed: toNumber(result[0]) === 1, remaining: toNumber(result[1]) }
 }
 
@@ -106,7 +135,7 @@ export async function enforceTokenBudget(identity: Identity, estimatedTokens: nu
 	if (limit <= 0) return
 	if (isDegraded()) throw limiterUnavailable()
 	const cost = Math.max(1, Math.ceil(estimatedTokens))
-	const result = await runScript("fixedWindow", [K.tpm("user", identity.userId)], [limit, config.defaultWindowSec, cost])
+	const result = await limitScript("fixedWindow", [K.tpm("user", identity.userId)], [limit, config.defaultWindowSec, cost])
 	if (toNumber(result[0]) !== 1) {
 		throw new GatewayError({
 			code: ErrorCode.TPM_LIMIT_EXCEEDED,
@@ -141,7 +170,7 @@ export async function enforceSuccessWindow(identity: Identity, requestId: string
 	if (limit <= 0) return
 	if (isDegraded()) throw limiterUnavailable()
 	const windowMs = config.defaultWindowSec * 1000
-	const result = await runScript(
+	const result = await limitScript(
 		"slidingSuccess",
 		[K.successWindow(identity.userId)],
 		[limit, windowMs, nowMs(), requestId],
@@ -159,10 +188,9 @@ export type ConcurrencyLease = { release: () => Promise<void> }
 /**
  * In-flight ceiling. Returns a lease whose `release` must run in a `finally`.
  *
- * INCR then compare is very slightly racy at the boundary - two requests can
- * both see `limit` under perfect contention - which is an acceptable trade for
- * avoiding another script round-trip on the hot path. The bound still holds to
- * within one request.
+ * Each request owns an opaque expiring member, not a shared integer. A late
+ * release can remove only its own member; it cannot decrement a fresh counter
+ * below zero after expiry and silently admit unlimited work.
  */
 export async function acquireConcurrency(
 	scope: LimitScope,
@@ -170,12 +198,15 @@ export async function acquireConcurrency(
 	limit: number,
 ): Promise<ConcurrencyLease> {
 	const noop = { release: async () => {} }
-	if (limit <= 0 || isDegraded()) return noop
+	if (limit <= 0) return noop
+	if (isDegraded()) throw limiterUnavailable()
 	const key = K.concurrency(scope, id)
-	const current = toNumber(await redisCommand(["INCR", key]))
-	if (current === 1) await redisCommand(["EXPIRE", key, 300])
-	if (current > limit) {
-		await redisCommand(["DECR", key])
+	const member = randomHex(16)
+	// Outlives the bounded upload, retry budget and absolute upstream lifetime.
+	const ttlMs = Math.max(900_000, config.requestBodyTimeoutMs + config.retryBudgetMs +
+		config.upstreamRequestTimeoutMs + 60_000)
+	const result = await limitScript("concurrency", [key], [limit, nowMs(), ttlMs, member])
+	if (result[0] !== 1) {
 		throw new GatewayError({
 			code: ErrorCode.CONCURRENCY_LIMIT,
 			status: 429,
@@ -189,7 +220,7 @@ export async function acquireConcurrency(
 			if (released) return
 			released = true
 			try {
-				await redisCommand(["DECR", key])
+				await redisCommand(["ZREM", key, member])
 			} catch {
 				// The TTL will reclaim the slot.
 			}

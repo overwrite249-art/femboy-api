@@ -10,9 +10,10 @@
  * the conservative local fallback instead of skipping the check.
  */
 
-import { config } from "../config/env.ts"
+import { config, isProduction, ConfigurationError } from "../config/env.ts"
 import { MemoryRedis } from "./memory.ts"
 import { SCRIPTS, type ScriptName } from "./lua.ts"
+import { randomHex } from "../util/crypto.ts"
 
 export type RedisKind = "upstash" | "memory"
 
@@ -81,9 +82,15 @@ let degradedUntil = 0
 let lastError = ""
 
 export function getRedis(): RedisLike {
-	if (instance) return instance
+	if (instance) {
+		if (isProduction() && instance.kind === "memory") throw new ConfigurationError("production requires shared Redis")
+		return instance
+	}
 	const url = config.redisUrl
 	const token = config.redisToken
+	if ((url && !token) || (token && !url) || (isProduction() && (!url || !token))) {
+		throw new ConfigurationError("both Upstash Redis URL and token are required")
+	}
 	instance = url && token ? new UpstashRedis(url, token) : new MemoryRedis()
 	return instance
 }
@@ -185,12 +192,11 @@ export async function acquireLock(
 	name: string,
 	ttlSec: number,
 ): Promise<null | (() => Promise<void>)> {
-	const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+	const token = randomHex(16)
 	const ok = await redisSetNx(name, token, ttlSec)
 	if (!ok) return null
 	return async () => {
-		const current = await redisGet(name)
-		if (current === token) await redisDel(name)
+		await runScript("releaseLock", [name], [token])
 	}
 }
 

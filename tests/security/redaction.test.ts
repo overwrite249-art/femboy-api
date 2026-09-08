@@ -36,17 +36,17 @@ describe("secret shapes in free text", () => {
 	it("removes every provider key format it claims to know", () => {
 		const samples: Array<[string, string]> = [
 			["ours", OUR_KEY],
-			["anthropic", "sk-ant-api03-ABCDEFGHIJKLMNOP1234"],
-			["openai project", "sk-proj-ABCDEFGHIJKLMNOP1234"],
+			["anthropic", "sk-ant-api03-ABCDEFGHIJKLMNOP1234"], // allow-secret: deterministic, non-functional format fixture
+			["openai project", "sk-proj-ABCDEFGHIJKLMNOP1234"], // allow-secret: deterministic, non-functional format fixture
 			["google api key", "AIzaSyA1234567890abcdefghijklmnopqrs"],
 			["google oauth", "ya29.a0AfH6SMB1234567890abcdefg"],
-			["aws access key", "AKIAIOSFODNN7EXAMPLE"],
-			["aws session key", "ASIAIOSFODNN7EXAMPLE"],
+			["aws access key", "AKIAIOSFODNN7EXAMPLE"], // allow-secret: deterministic, non-functional format fixture
+			["aws session key", "ASIAIOSFODNN7EXAMPLE"], // allow-secret: deterministic, non-functional format fixture
 			["github token", "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123"],
-			["slack token", "xoxb-1234567890-abcdefghij"],
+			["slack token", "xoxb-1234567890-abcdefghij"], // allow-secret: deterministic, non-functional format fixture
 			[
 				"jwt",
-				"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+				"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk", // allow-secret: deterministic, non-functional format fixture
 			],
 		]
 

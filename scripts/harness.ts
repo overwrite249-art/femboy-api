@@ -6,7 +6,7 @@
  * submit-and-poll cycle, that the gateway can be run end to end for free:
  *
  *   node --experimental-strip-types scripts/harness.ts     # port 8787
- *   # then add a channel with baseUrl http://127.0.0.1:8787 and any key
+ *   # inspect the fixture directly; loopback is intentionally not an allowed upstream
  *
  * Deliberate behaviours, because the interesting bugs are here:
  *
@@ -351,8 +351,8 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
 	})()
 })
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
 	console.log(`harness listening on http://127.0.0.1:${PORT}`)
-	console.log("add a channel with that base url and any non-empty key")
+	console.log("local fixture only; the gateway's SSRF guard intentionally rejects loopback upstreams")
 	console.log("append ?fail=429 to any path to force a provider error")
 })

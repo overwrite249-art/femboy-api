@@ -95,19 +95,28 @@ explicitly enabled by the operator.
 
 | Surface | Status |
 | --- | --- |
-| `POST /mj/submit/*` | Identical request, **rewritten task id** |
-| `GET /mj/task/{id}/fetch` | Identical response shape |
-| `POST /suno/*`, `/kling/*`, `/jimeng/*`, `/vidu/*`, `/dify/*` | Forwarded |
+| `POST /mj/submit/imagine`, `/blend`, `/describe` | JSON-only, gateway task IDs |
+| `POST /v1/videos` | JSON-only; multipart async submissions are rejected |
+| Other MJ/Suno/Kling/Jimeng/Vidu/Dify submit paths | Disabled unless exactly listed in the channel's `config.submitPaths` |
+| `GET /mj/task/{id}/fetch` | Owner-scoped gateway task view |
 | `GET /v1/tasks`, `GET /v1/tasks/{id}` | Gateway-native task view |
 
-The one intentional difference across all of them: **the task id in the response
-is the gateway's, not the provider's.** A provider id is often sequential, and
-forwarding it would let one customer poll another's job. The gateway id is 166
-bits of random and is checked against its owner on every fetch. Clients that
-store the returned id and poll with it -- which is all of them -- notice nothing.
+This intentionally replaces the old arbitrary authenticated POST proxy. Do not
+allowlist provider account-administration paths or resource-access paths merely
+to make a client work. Query strings, percent-encoded paths, backslashes and dot
+segments are refused. Async bodies must be JSON so resource references can be
+validated before forwarding.
 
-A task belonging to another user returns **404, not 403**, because "you may not
-see this" still confirms it exists.
+Recognized follow-up task/job/session references must identify a task owned by
+the caller on the same platform and channel. The provider key used to submit is
+stored as a key ID and reused for polling/follow-ups. Existing tasks without a
+key ID retain the legacy fallback and need operator review before key rotation.
+
+Gateway IDs replace exact provider-ID values in the public task result. The
+rewrite is not a promise to remove IDs embedded inside artifact URL substrings.
+A stranger's task returns 404. Explicit admin/root identities can inspect across
+owners; other or unknown roles cannot. Polling does not bill again and terminal
+or not-yet-due history cannot consume the due-work batch limit.
 
 ## Authentication forms accepted
 

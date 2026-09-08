@@ -96,6 +96,7 @@ async function main(): Promise<void> {
 		status: "enabled",
 		quota: 0,
 		usedQuota: 0,
+		quotaLedgerVersion: 2,
 		unlimitedQuota: true,
 		expiresAt: null,
 		allowedIps: [],

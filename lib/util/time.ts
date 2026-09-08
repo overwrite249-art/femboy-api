@@ -29,7 +29,7 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 /** Full jitter exponential backoff, capped. */
 export function backoffDelayMs(attempt: number, baseMs = 200, capMs = 8_000): number {
 	const exponential = Math.min(capMs, baseMs * 2 ** Math.max(0, attempt))
-	return Math.floor(Math.random() * exponential)
+	return Math.floor(Math.random() * exponential) // nosemgrep: no-math-random-for-secrets -- non-secret retry jitter
 }
 
 export class Deadline {

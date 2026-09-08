@@ -5,37 +5,36 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # Weekly, because a dependency that was clean on Monday may not be on Friday.
     - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
 
 jobs:
   semgrep:
     runs-on: ubuntu-latest
-    container:
-      image: returntocorp/semgrep
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned scanner outside the checkout
+        run: |
+          python3 -m venv "$RUNNER_TEMP/semgrep"
+          "$RUNNER_TEMP/semgrep/bin/pip" install semgrep==1.176.1
       - name: Gateway invariants
-        run: semgrep --config .semgrep/gateway-rules.yml --error --metrics=off
-
+        run: '"$RUNNER_TEMP/semgrep/bin/semgrep" scan --config .semgrep/gateway-rules.yml --error --metrics=off --disable-version-check'
       - name: Community rulesets
-        run: semgrep --config p/typescript --config p/secrets --metrics=off
+        run: '"$RUNNER_TEMP/semgrep/bin/semgrep" scan --config p/typescript --config p/secrets --error --metrics=off --disable-version-check'
 
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          bun-version: latest
-
-      - name: Install
-        run: bun install
-
-      - name: Dependency audit
-        run: bun audit || true
-
-      - name: Secret scan
-        run: bun scripts/check-secrets.ts
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Dependency audit (blocking)
+        run: npm audit
+      - run: npm run check:secrets

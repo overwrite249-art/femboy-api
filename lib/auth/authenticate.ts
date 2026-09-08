@@ -12,7 +12,7 @@
  *  4. Console sessions cannot authenticate the relay (GW-018).
  */
 
-import { config } from "../config/env.ts"
+import { config, assertProductionReady } from "../config/env.ts"
 import { getClientIp } from "../http/headers.ts"
 import { forbidden, unauthorized } from "../http/errors.ts"
 import { ErrorCode } from "../http/errors.ts"
@@ -68,7 +68,7 @@ export type AuthContext = {
 	startedAt: number
 }
 
-type CacheHit = { hit: true; digest: string; identity: Identity }
+type CacheHit = { hit: true; digest: string; identity: Identity; expiresAt: number | null }
 type CacheMiss = { hit: false }
 type CacheEntry = CacheHit | CacheMiss
 
@@ -107,7 +107,10 @@ export async function invalidateTokenCaches(prefixes: string[]): Promise<void> {
 async function loadIdentity(prefix: string): Promise<CacheEntry> {
 	const key = tokenCacheKey(prefix)
 	const cached = await redisGetJson<CacheEntry>(key)
-	if (cached) return cached
+	if (cached && (!cached.hit || (
+		cached.expiresAt !== undefined &&
+		(cached.expiresAt === null || cached.expiresAt > Date.now())
+	))) return cached
 
 	const tokenCollection = await tokens()
 	const token = await tokenCollection.findOne({ keyPrefix: prefix })
@@ -145,8 +148,11 @@ async function loadIdentity(prefix: string): Promise<CacheEntry> {
 		tpmLimit: token.tpmLimit ?? user.tpmLimit ?? config.defaultTpm,
 	}
 
-	const entry: CacheHit = { hit: true, digest: token.keyDigest, identity }
-	await redisSetJson(key, entry, config.tokenCacheTtlSec)
+	const expiresAt = token.expiresAt ? new Date(token.expiresAt).getTime() : null
+	const entry: CacheHit = { hit: true, digest: token.keyDigest, identity, expiresAt }
+	const ttl = expiresAt === null ? config.tokenCacheTtlSec
+		: Math.max(1, Math.min(config.tokenCacheTtlSec, Math.ceil((expiresAt - Date.now()) / 1000)))
+	await redisSetJson(key, entry, ttl)
 	return entry
 }
 
@@ -158,6 +164,7 @@ async function loadIdentity(prefix: string): Promise<CacheEntry> {
  * coarse code.
  */
 export async function authenticate(req: Request): Promise<AuthContext> {
+	assertProductionReady()
 	const startedAt = nowMs()
 	const clientIp = getClientIp(req.headers)
 	const credential = extractCredential(req)
@@ -195,7 +202,29 @@ export async function authenticate(req: Request): Promise<AuthContext> {
 		return reject(startedAt, unauthorized("invalid api key"))
 	}
 
-	const identity = entry.identity
+	// Cached data is a lookup hint, never a revocation/authority decision. A
+	// reader may repopulate an old cache entry after a concurrent invalidation.
+	// Recheck both rows so disable, rotation, demotion and entitlement changes
+	// hold even in that race, including non-billable task/model GET endpoints.
+	const [currentToken, currentUser] = await Promise.all([
+		tokens().then((collection) => collection.findOne({ _id: entry.identity.tokenId, userId: entry.identity.userId })),
+		users().then((collection) => collection.findOne({ _id: entry.identity.userId })),
+	])
+	if (!currentToken || currentToken.status !== "enabled" ||
+		!currentUser || currentUser.status !== "enabled" ||
+		(currentToken.expiresAt && new Date(currentToken.expiresAt).getTime() <= Date.now()) ||
+		!timingSafeEqualHex(presented, currentToken.keyDigest)) {
+		return reject(startedAt, unauthorized("invalid api key"))
+	}
+	const identity: Identity = {
+		...entry.identity,
+		tokenName: currentToken.name, username: currentUser.username, role: currentUser.role,
+		group: currentToken.group || currentUser.group,
+		unlimitedQuota: currentToken.unlimitedQuota, tokenQuota: currentToken.quota, userQuota: currentUser.quota,
+		allowedIps: currentToken.allowedIps ?? [], allowedModels: currentToken.allowedModels ?? [],
+		rpmLimit: currentToken.rpmLimit ?? currentUser.rpmLimit ?? config.defaultRpm,
+		tpmLimit: currentToken.tpmLimit ?? currentUser.tpmLimit ?? config.defaultTpm,
+	}
 
 	if (identity.allowedIps.length > 0) {
 		if (!clientIp || !matchesAnyCidr(identity.allowedIps, clientIp)) {
@@ -234,7 +263,7 @@ export function assertModelAllowed(identity: Identity, model: string): void {
 /** Admin-only surfaces. Roles are ordered: root > admin > user. */
 export function assertRole(identity: Identity, minimum: UserRole): void {
 	const rank: Record<UserRole, number> = { user: 0, admin: 1, root: 2 }
-	if (rank[identity.role] < rank[minimum]) {
+	if (rank[identity.role] === undefined || rank[identity.role] < rank[minimum]) {
 		throw forbidden("this operation requires elevated privileges")
 	}
 }

@@ -27,9 +27,10 @@ application and the provider:
 - **Routing.** Many upstream accounts per model, elected by priority, weight and
   live health. A dead key is skipped, a flaky provider is retried elsewhere.
 - **Metering.** Every request is priced from a per-model ratio table and settled
-  against a quota ledger that is exactly-once, even when a stream is aborted.
-- **Isolation.** Your upstream provider keys are encrypted at rest and never
-  appear in a response, a log line or an error message.
+  against a durable, transactional quota ledger with idempotent settlement.
+  Unknown abandoned work requires reconciliation; see the rollout notes.
+- **Isolation.** Upstream provider keys are encrypted at rest. Response/error
+  paths redact the credential used for that request, with regression coverage.
 
 It runs entirely on serverless primitives: Next.js route handlers on Vercel,
 MongoDB Atlas for durable state, Upstash Redis for the hot path.
@@ -40,24 +41,28 @@ MongoDB Atlas for durable state, Upstash Redis for the hot path.
 
 | Dialect | Endpoints |
 | --- | --- |
-| **OpenAI** | `/v1/chat/completions` · `/v1/completions` · `/v1/responses` · `/v1/embeddings` · `/v1/images/*` · `/v1/audio/*` · `/v1/moderations` · `/v1/rerank` · `/v1/models` · `/v1/realtime` |
+| **OpenAI** | `/v1/chat/completions` · `/v1/completions` · `/v1/responses` · `/v1/embeddings` · `/v1/images/*` · `/v1/audio/*` · `/v1/moderations` · `/v1/rerank` · `/v1/models` |
 | **Anthropic** | `/v1/messages` · `/v1/messages/count_tokens` |
 | **Gemini** | `/v1beta/models/{model}:generateContent` · `:streamGenerateContent` · `:countTokens` · `:embedContent` · `:batchEmbedContents` |
-| **Async media** | `/mj/submit/*` · `/mj/task/{id}/fetch` · Suno · Kling · Jimeng · Vidu · Dify · `/v1/videos` |
+| **Async media** | JSON submissions: `/mj/submit/imagine`, `/blend`, `/describe`, `/v1/videos`; other platforms require explicit operator allowlisting. Gateway-owned task polling. |
 | **Billing** | `/v1/dashboard/billing/subscription` · `/usage` |
 
-Authentication is accepted in every form the corresponding SDK sends it:
+Recognized relay credential forms include:
 `Authorization: Bearer`, `x-api-key`, `x-goog-api-key`, `?key=`, `mj-api-secret`,
-and the WebSocket subprotocol form used by the realtime API.
+and the realtime WebSocket subprotocol credential form. Realtime itself returns
+501; multipart async submissions and arbitrary provider-account paths are not supported.
 
 ---
 
 ## Quick start
 
+Use **Node.js 22.19+** (Node 22/24 are the CI targets) and npm.
+**Existing deployment? Read [the mandatory quota migration](docs/QUOTA-MIGRATION.md) before upgrading.**
+
 ```bash
 git clone https://github.com/overwrite249-art/femboy-api.git
 cd femboy-api
-npm install
+npm ci --ignore-scripts
 cp .env.example .env.local
 ```
 
@@ -69,12 +74,14 @@ for v in KEY_PEPPER CHANNEL_KEY_MASTER SESSION_SECRET CRON_SECRET IP_HASH_SECRET
 done >> .env.local
 ```
 
-Add your `MONGODB_URI` (Atlas free tier is enough) and the two Upstash values,
-then:
+Add your `MONGODB_URI` (Atlas or a transaction-capable replica set), both Upstash
+values, and `PUBLIC_BASE_URL`. Next loads `.env.local`; standalone Node scripts
+need `--env-file` or exported environment variables. Then:
 
 ```bash
-npm run db:indexes     # create every index, including the TTL and unique ones
-npm run bootstrap:admin
+node --env-file=.env.local --experimental-strip-types scripts/ensure-indexes.ts
+# Supply ADMIN_PASSWORD privately through your shell/secret manager, not a command argument.
+node --env-file=.env.local --experimental-strip-types scripts/create-admin.ts
 npm run dev
 ```
 
@@ -82,14 +89,13 @@ The console is at `http://localhost:3000`, the API at `http://localhost:3000/v1`
 
 ### Running with no services at all
 
-Omit `MONGODB_URI` and the Upstash variables and the gateway starts anyway,
-backed by an in-process store and an in-process Redis twin. Every feature works;
-nothing survives a restart. This is what the test suite and the offline harness
-use:
+In development/test only, omit `MONGODB_URI` and both Upstash variables to use
+in-process twins. Nothing survives a restart, and state is not shared across
+processes. **Production refuses this fallback.** The regular tests inject these twins:
 
 ```bash
-npm test        # unit + security suites, zero dependencies required
-npm run harness # a real HTTP server with a mock upstream
+npm test        # unit + security suites; no external services needed
+npm run harness # standalone loopback mock provider, not an SSRF bypass
 ```
 
 ---
@@ -100,14 +106,17 @@ npm run harness # a real HTTP server with a mock upstream
 vercel --prod
 ```
 
-Set the same variables in the Vercel dashboard. `vercel.json` already declares
+Set all required storage and secret variables in the Vercel dashboard. Back up
+and migrate existing balances before routing traffic to this release. Do not
+run old and new accounting code concurrently. `vercel.json` already declares
 the eight cron jobs the gateway needs (health checks, usage flushing, task
 polling, quota reconciliation, rollups, pricing refresh, token expiry and
 partition maintenance).
 
 > **Note.** The relay runs on the Node runtime rather than Edge. The MongoDB
 > driver needs a TCP socket, which Edge does not provide. The hot path still
-> only touches Redis over HTTP; Mongo is consulted on a cache miss.
+> checks current account/key authority in Mongo, and reserves/settles funds in
+> Mongo transactions. Redis remains required for shared admission and recovery.
 
 ---
 
@@ -123,7 +132,7 @@ partition maintenance).
   │ authenticate  →  quota reserve  →  limits   │
   │        │              │              │      │
   │        ▼              ▼              ▼      │
-  │   token cache    Lua ledger     token bucket│
+  │   token cache    Mongo ledger   token bucket│
   ├─────────────────────────────────────────────┤
   │ transform in  →  elect channel  →  relay    │
   │                       │             │       │
@@ -143,25 +152,19 @@ Full detail lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Security
 
-This implementation was written against a threat model of thirty findings
-(`GW-001` … `GW-030`) covering quota races, SSRF, credential leakage, response
-splitting, prompt-injection across provider boundaries, billing manipulation and
-fail-open limiters. Each one is documented with its exploit, its fix and the
-test that proves the fix in [`docs/SECURITY.md`](docs/SECURITY.md) and
-[`docs/AUDIT.md`](docs/AUDIT.md).
+The [2026-09-08 security review](docs/SECURITY-REVIEW-2026-09-08.md) records
+reproduced failures, fixes, verification and remaining limits. Tests and scanners
+reduce risk; they do not certify that every vulnerability has been found.
 
-Highlights:
-
-- Quota debits are a single atomic Lua script - concurrent requests cannot both
-  pass a balance check.
-- Settlement is keyed by request id and journalled, so an aborted stream is
-  refunded exactly once.
-- Upstream keys are sealed with AES-256-GCM under a versioned master key and are
-  scrubbed from every outbound string by a redactor with ReDoS-safe patterns.
-- The client address is taken from the *right* of `X-Forwarded-For`, so a
-  spoofed prefix cannot evade per-IP limits.
-- Outbound URLs are resolved and checked against private, link-local, loopback
-  and metadata ranges before a connection is made.
+- Durable user/token balances and request journals commit together in MongoDB.
+- Registration cannot assign paid quota, privileged roles or premium groups.
+- Cached credentials do not preserve revoked privileges; logout revokes copied sessions.
+- Atomic shared rate limits fail closed when Redis is unavailable.
+- Validated DNS addresses are pinned to the actual socket; cross-origin redirects
+  cannot forward provider credentials or request bodies.
+- Async submissions are allowlisted and task references are owner-scoped.
+- CI checks tests, types, the production build, billing vectors, secret patterns,
+  dependency advisories, and static security rules.
 
 ---
 
@@ -170,8 +173,10 @@ Highlights:
 | Document | Contents |
 | --- | --- |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Request lifecycle, module map, data model |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model and control catalogue |
-| [`docs/AUDIT.md`](docs/AUDIT.md) | GW-001…GW-030 with exploit and proof |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Current security controls and boundaries |
+| [`docs/SECURITY-REVIEW-2026-09-08.md`](docs/SECURITY-REVIEW-2026-09-08.md) | Reproduced fixes, checks and residual risks |
+| [`docs/QUOTA-MIGRATION.md`](docs/QUOTA-MIGRATION.md) | Required migration for existing deployments |
+| [`docs/AUDIT.md`](docs/AUDIT.md) | Historical design-review notes, not a current attestation |
 | [`docs/PARITY.md`](docs/PARITY.md) | Endpoint-by-endpoint conformance matrix |
 | [`docs/PROVIDER-QUIRKS.md`](docs/PROVIDER-QUIRKS.md) | Per-provider deviations worth knowing |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Operational procedures and incident playbooks |

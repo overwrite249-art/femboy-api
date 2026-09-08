@@ -28,6 +28,7 @@ export const COLLECTIONS = {
 	auditLogs: "audit_logs",
 	settings: "settings",
 	oauthStates: "oauth_states",
+	sessionRevocations: "session_revocations",
 } as const
 
 /** Usage logs are sharded by UTC month: usage_logs_202608. */
@@ -42,7 +43,7 @@ export type UserDoc = {
 	_id: string
 	username: string
 	displayName: string
-	email: string
+	email?: string
 	/** PBKDF2-derived, never a raw hash of the password alone. */
 	passwordHash?: string
 	passwordSalt?: string
@@ -53,6 +54,9 @@ export type UserDoc = {
 	group: string
 	/** Remaining quota in quota units. */
 	quota: number
+	/** v1 Redis balances require an explicit upgrade before v2 serves traffic. */
+	quotaLedgerVersion?: number
+	legacyUsedQuota?: number
 	/** Lifetime consumption, for reporting only. */
 	usedQuota: number
 	requestCount: number
@@ -78,6 +82,7 @@ export type TokenDoc = {
 	status: EntityStatus
 	/** Private budget; ignored when `unlimitedQuota` is true. */
 	quota: number
+	quotaLedgerVersion?: number
 	usedQuota: number
 	unlimitedQuota: boolean
 	expiresAt: Date | null
@@ -296,6 +301,8 @@ export type QuotaJournalDoc = {
 	state: "pending" | "applied" | "failed"
 	createdAt: Date
 	appliedAt?: Date
+	expiresAt?: Date
+	tokenLimited?: boolean
 }
 
 export type TaskPlatform = "midjourney" | "suno" | "kling" | "jimeng" | "vidu" | "dify" | "video"
@@ -311,6 +318,8 @@ export type TaskDoc = {
 	userId: string
 	tokenId: string
 	channelId: string
+	/** The exact provider credential used to submit; never round-robin a poll. */
+	channelKeyId?: string
 	model: string
 	status: "pending" | "submitted" | "in_progress" | "success" | "failure" | "expired"
 	progress: string
@@ -365,4 +374,5 @@ export type OAuthStateDoc = {
 	createdAt: Date
 	/** TTL index target. */
 	expiresAt: Date
+	consumedAt?: Date
 }

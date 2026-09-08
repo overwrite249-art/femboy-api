@@ -17,12 +17,13 @@
  */
 
 import { config } from "../config/env.ts"
-import { malformedUpstreamBody, upstreamTimeout } from "../http/errors.ts"
+import { malformedUpstreamBody, ssrfBlocked, upstreamTimeout } from "../http/errors.ts"
 import { assertRedirectAllowed, assertUpstreamUrlAllowed } from "./ssrf.ts"
+import { createPinnedDispatcher } from "./dispatcher.ts"
 
 export type UpstreamFetchOptions = {
 	/** The client's signal. Aborting it aborts the upstream call. */
-	signal?: AbortSignal
+	signal?: AbortSignal | null
 	/** Time allowed for response headers to arrive. */
 	headerTimeoutMs?: number
 	/** Time allowed between body chunks. */
@@ -31,11 +32,14 @@ export type UpstreamFetchOptions = {
 	maxBytes?: number
 	/** How many redirects to re-validate and follow. */
 	maxRedirects?: number
+	/** Absolute lifetime, not reset by body activity or redirects. */
+	totalTimeoutMs?: number
 }
 
 export type GuardStreamOptions = {
 	maxBytes: number
 	idleMs: number
+	onClose?: () => void
 }
 
 /**
@@ -50,6 +54,12 @@ export function guardStream(
 ): ReadableStream<Uint8Array> {
 	const reader = source.getReader()
 	let total = 0
+	let finished = false
+	const finish = () => {
+		if (finished) return
+		finished = true
+		options.onClose?.()
+	}
 
 	return new ReadableStream<Uint8Array>({
 		async pull(controller) {
@@ -70,6 +80,7 @@ export function guardStream(
 						: await read
 
 				if (next.done) {
+					finish()
 					controller.close()
 					return
 				}
@@ -77,7 +88,8 @@ export function guardStream(
 				const chunk = next.value
 				total += chunk.byteLength
 				if (options.maxBytes > 0 && total > options.maxBytes) {
-					await reader.cancel().catch(() => undefined)
+					void reader.cancel().catch(() => undefined)
+					finish()
 					controller.error(
 						malformedUpstreamBody(
 							`upstream response exceeded ${options.maxBytes} bytes`,
@@ -87,14 +99,16 @@ export function guardStream(
 				}
 				controller.enqueue(chunk)
 			} catch (error) {
-				await reader.cancel().catch(() => undefined)
+				void reader.cancel().catch(() => undefined)
+				finish()
 				controller.error(error)
 			} finally {
 				if (timer) clearTimeout(timer)
 			}
 		},
-		async cancel(reason) {
-			await reader.cancel(reason).catch(() => undefined)
+		cancel(reason) {
+			void reader.cancel(reason).catch(() => undefined)
+			finish()
 		},
 	})
 }
@@ -145,18 +159,32 @@ export async function upstreamFetch(
 	const idleTimeoutMs = options.idleTimeoutMs ?? config.streamingIdleTimeoutMs
 	const maxBytes = options.maxBytes ?? config.maxUpstreamResponseBytes
 	const maxRedirects = options.maxRedirects ?? 3
+	const deadline = Date.now() + Math.max(1, options.totalTimeoutMs ?? config.upstreamRequestTimeoutMs)
+	const signals = [options.signal, init.signal].filter((signal): signal is AbortSignal => !!signal)
+	const clientSignal = signals.length ? AbortSignal.any(signals) : undefined
+	clientSignal?.throwIfAborted()
 
 	let target = await assertUpstreamUrlAllowed(rawUrl)
 	let redirects = 0
+	let requestInit = { ...init }
 
 	for (;;) {
 		const controller = new AbortController()
 		const abortUpstream = (reason?: unknown) => controller.abort(reason)
+		const dispatcher = createPinnedDispatcher(target)
+		const onAbort = () => abortUpstream(clientSignal?.reason)
 
 		// A client that goes away takes the upstream call with it.
-		if (options.signal) {
-			if (options.signal.aborted) abortUpstream(options.signal.reason)
-			else options.signal.addEventListener("abort", () => abortUpstream(options.signal?.reason), { once: true })
+		if (clientSignal) {
+			if (clientSignal.aborted) onAbort()
+			else clientSignal.addEventListener("abort", onAbort, { once: true })
+		}
+		const totalTimer = setTimeout(() => abortUpstream(upstreamTimeout("upstream request timed out")),
+			Math.max(1, deadline - Date.now()))
+		const cleanup = () => {
+			clearTimeout(totalTimer)
+			clientSignal?.removeEventListener("abort", onAbort)
+			void dispatcher.destroy().catch(() => {})
 		}
 
 		const headerTimer =
@@ -166,14 +194,17 @@ export async function upstreamFetch(
 
 		let response: Response
 		try {
+			controller.signal.throwIfAborted()
 			response = await fetch(target.url.toString(), {
-				...init,
+				...requestInit,
 				signal: controller.signal,
+				dispatcher,
 				// Handled below so each hop is re-validated.
 				redirect: "manual",
-			})
+			} as RequestInit)
 		} catch (error) {
-			if (options.signal?.aborted) throw error
+			cleanup()
+			if (clientSignal?.aborted) throw error
 			if (controller.signal.aborted) throw upstreamTimeout("upstream headers timed out")
 			throw error
 		} finally {
@@ -181,18 +212,35 @@ export async function upstreamFetch(
 		}
 
 		const location = response.headers.get("location")
-		const isRedirect = response.status >= 300 && response.status < 400 && location
+		const isRedirect = [301, 302, 303, 307, 308].includes(response.status) && location
 		if (isRedirect) {
+			void response.body?.cancel().catch(() => undefined)
+			cleanup()
 			if (redirects >= maxRedirects) throw malformedUpstreamBody("too many upstream redirects")
 			redirects += 1
-			await response.body?.cancel().catch(() => undefined)
+			const next = new URL(location, target.url)
+			// Replaying a provider key or prompt to a new origin is credential
+			// exfiltration even if both addresses are publicly routable.
+			if (next.origin !== target.url.origin) throw ssrfBlocked("cross-origin upstream redirects are disabled")
+			const method = (requestInit.method ?? "GET").toUpperCase()
+			if ((response.status === 303 && method !== "HEAD") ||
+				([301, 302].includes(response.status) && method === "POST")) {
+				const headers = new Headers(requestInit.headers)
+				for (const name of ["content-type", "content-length", "content-encoding", "transfer-encoding"]) headers.delete(name)
+				requestInit = { ...requestInit, method: "GET", body: undefined, headers }
+			} else if (requestInit.body instanceof ReadableStream) {
+				throw malformedUpstreamBody("cannot replay a streamed request body across a redirect")
+			}
 			target = await assertRedirectAllowed(location, target.url)
 			continue
 		}
 
-		if (!response.body) return response
+		if (!response.body) {
+			cleanup()
+			return response
+		}
 
-		return new Response(guardStream(response.body, { maxBytes, idleMs: idleTimeoutMs }), {
+		return new Response(guardStream(response.body, { maxBytes, idleMs: idleTimeoutMs, onClose: cleanup }), {
 			status: response.status,
 			statusText: response.statusText,
 			headers: response.headers,

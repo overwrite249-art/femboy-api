@@ -9,6 +9,7 @@
 
 import { hmacSha256Hex } from "../util/crypto.ts"
 import { config } from "../config/env.ts"
+import { sanitizeParsed } from "../util/json.ts"
 
 const MAX_REDACT_INPUT = 128 * 1024
 
@@ -72,6 +73,28 @@ export function redactKnown(input: string, secrets: Array<string | undefined | n
 /** Full sanitisation used before anything reaches a log sink or a client. */
 export function sanitizeOutbound(input: string, knownSecrets: Array<string | undefined | null> = []): string {
 	return redact(redactKnown(input, knownSecrets))
+}
+
+/** Errors may echo arbitrary (even unusually short) real provider credentials. */
+export function sanitizeProviderError(input: string, secret: string): string {
+	return redact(secret ? input.split(secret).join(REDACTION) : input)
+}
+
+/** Exact credential removal without truncating legitimate model output. */
+export function redactProviderValue<T>(value: T, secret: string): T {
+	const clean = sanitizeParsed(value)
+	if (!secret) return clean
+	function walk(item: unknown): unknown {
+		if (typeof item === "string") return item.split(secret).join(REDACTION)
+		if (Array.isArray(item)) return item.map(walk)
+		if (item && typeof item === "object") {
+			return Object.fromEntries(Object.entries(item).map(([key, child]) => [
+				key.split(secret).join(REDACTION), walk(child),
+			]))
+		}
+		return item
+	}
+	return walk(clean) as T
 }
 
 /** Recursively redacts string leaves of a JSON-ish structure. */

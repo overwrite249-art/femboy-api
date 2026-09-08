@@ -53,6 +53,22 @@ async function dispatch(
 	const s = (i: number) => String(args[i] ?? "")
 
 	switch (name) {
+		case "ackUsage":
+			if (await redis.command(["GET", keys[1]]) !== s(0)) return [0]
+			await redis.command(["LTRIM", keys[0], n(1), -1])
+			await redis.command(["DEL", keys[1]])
+			return [1]
+		case "concurrency": {
+			await redis.command(["ZREMRANGEBYSCORE", keys[0], "-inf", n(1)])
+			const count = Number(await redis.command(["ZCARD", keys[0]]))
+			if (count >= n(0)) return [0, count]
+			await redis.command(["ZADD", keys[0], n(1) + n(2), s(3)])
+			await redis.command(["PEXPIRE", keys[0], n(2) + 1000])
+			return [1, count + 1]
+		}
+		case "releaseLock":
+			if (await redis.command(["GET", keys[0]]) !== s(0)) return [0]
+			return [Number(await redis.command(["DEL", keys[0]]))]
 		case "tokenBucket":
 			return tokenBucket(redis, keys[0], n(0), n(1), n(2), n(3), n(4))
 		case "fixedWindow":

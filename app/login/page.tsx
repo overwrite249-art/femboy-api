@@ -1,22 +1,22 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-
-function localPath(value: string | null): string {
-	// The same rule the server applies: a return path is a local path or it is
-	// nothing. Accepting "//host" here would hand out an open redirect.
-	if (!value) return "/console"
-	if (!value.startsWith("/")) return "/console"
-	if (value.startsWith("//")) return "/console"
-	return value
-}
+import { safeRedirect } from "../../lib/http/redirect.ts"
 
 export default function LoginPage() {
+	return (
+		<Suspense fallback={<main className="auth"><p role="status">Loading sign-in…</p></main>}>
+			<LoginForm />
+		</Suspense>
+	)
+}
+
+function LoginForm() {
 	const router = useRouter()
 	const params = useSearchParams()
-	const next = localPath(params.get("redirect"))
+	const next = safeRedirect(params.get("redirect"))
 
 	const [username, setUsername] = useState("")
 	const [password, setPassword] = useState("")

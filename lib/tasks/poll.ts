@@ -13,10 +13,12 @@
  */
 
 import { config } from "../config/env.ts"
+import { safeJsonParse } from "../util/json.ts"
+import { redactProviderValue } from "../http/redact.ts"
 import { channels } from "../db/index.ts"
 import type { ChannelDoc, TaskDoc } from "../db/types.ts"
 import { buildUpstreamHeaders } from "../http/headers.ts"
-import { pickChannelKey } from "../routing/keys.ts"
+import { pickChannelKey, selectChannelKey } from "../routing/keys.ts"
 import { providerAuthHeaders } from "../transform/index.ts"
 import { readCappedText, upstreamFetch } from "../upstream/fetch.ts"
 import { dueTasks, isExpired, nextPollDelayMs, updateTask } from "./index.ts"
@@ -203,7 +205,8 @@ export async function pollDueTasks(limit = 50): Promise<Record<string, number>> 
 				continue
 			}
 
-			const key = await pickChannelKey(channel._id)
+			const key = task.channelKeyId
+				? await selectChannelKey(channel._id, task.channelKeyId) : await pickChannelKey(channel._id)
 			const headers = buildUpstreamHeaders({
 				clientHeaders: new Headers(),
 				authHeaders: providerAuthHeaders(channel.type, key.secret),
@@ -231,7 +234,7 @@ export async function pollDueTasks(limit = 50): Promise<Record<string, number>> 
 
 			let parsed: unknown = {}
 			try {
-				parsed = JSON.parse(text)
+				parsed = redactProviderValue(safeJsonParse(text, { maxBytes: config.maxUpstreamResponseBytes }), key.secret)
 			} catch {
 				parsed = {}
 			}

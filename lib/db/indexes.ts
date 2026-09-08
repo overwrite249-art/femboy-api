@@ -59,6 +59,7 @@ export const INDEXES: Record<string, IndexSpec[]> = {
 		// The exactly-once anchor: (requestId, kind) can exist at most once.
 		{ key: { requestId: 1, kind: 1 }, name: "uniq_request_kind", unique: true },
 		{ key: { state: 1, createdAt: 1 }, name: "pending_scan" },
+		{ key: { state: 1, expiresAt: 1 }, name: "abandoned_holds" },
 		{ key: { userId: 1, createdAt: -1 }, name: "by_user" },
 	],
 	[COLLECTIONS.tasks]: [
@@ -80,6 +81,9 @@ export const INDEXES: Record<string, IndexSpec[]> = {
 	[COLLECTIONS.settings]: [],
 	[COLLECTIONS.oauthStates]: [
 		{ key: { expiresAt: 1 }, name: "ttl_state", expireAfterSeconds: 0 },
+	],
+	[COLLECTIONS.sessionRevocations]: [
+		{ key: { expiresAt: 1 }, name: "ttl_revocation", expireAfterSeconds: 0 },
 	],
 }
 

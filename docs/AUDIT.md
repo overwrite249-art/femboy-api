@@ -1,5 +1,11 @@
 # Audit method
 
+> **Historical design notes (pre-2026-09-08).** Statements below about closed
+> findings, test counts, Redis money, and fail-open behavior are not a current
+> security attestation. The subsequent review reproduced gaps in several claimed
+> controls. Read [the current review](SECURITY-REVIEW-2026-09-08.md),
+> [current controls](SECURITY.md), and [migration instructions](QUOTA-MIGRATION.md) first.
+
 ## What this document is for
 
 `SECURITY.md` lists what was found and how it is closed. This document explains

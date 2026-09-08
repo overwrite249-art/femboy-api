@@ -217,3 +217,6 @@ async function main(): Promise<void> {
 }
 
 await main()
+
+// Keep top-level await in module scope under TypeScript.
+export {}

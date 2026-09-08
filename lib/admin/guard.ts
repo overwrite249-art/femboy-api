@@ -63,7 +63,7 @@ export async function requireAdmin(
 		if (!user || user.status !== "enabled") {
 			throw forbidden("this account is not active")
 		}
-		if (ROLE_RANK[user.role] < ROLE_RANK[minimum]) {
+		if (ROLE_RANK[user.role] === undefined || ROLE_RANK[user.role] < ROLE_RANK[minimum]) {
 			throw forbidden("this operation requires elevated privileges")
 		}
 		return {
@@ -81,11 +81,13 @@ export async function requireAdmin(
 	// state, expiry, the IP allowlist, and the constant-time floor, so those
 	// checks are inherited rather than reimplemented here.
 	const context = await authenticate(req)
-	assertRole(context.identity, minimum)
+	const user = await (await users()).findOne({ _id: context.identity.userId })
+	if (!user || user.status !== "enabled") throw forbidden("this account is not active")
+	assertRole({ ...context.identity, role: user.role }, minimum)
 	return {
 		userId: context.identity.userId,
 		username: context.identity.username,
-		role: context.identity.role,
+		role: user.role,
 		clientIp: context.clientIp,
 		ipHash: context.ipHash,
 		requestId: context.requestId,

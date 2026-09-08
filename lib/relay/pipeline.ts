@@ -55,6 +55,7 @@ import {
 } from "../transform/index.ts"
 import type { Dialect, Endpoint } from "../transform/index.ts"
 import { createClientFramer } from "../transform/framing.ts"
+import { redactProviderValue, sanitizeProviderError } from "../http/redact.ts"
 
 /**
  * The upstream call, injectable so the pipeline can be exercised without a
@@ -199,7 +200,11 @@ export async function relay(input: RelayInput): Promise<Response> {
 			settled = true
 			const quota = computeQuota(args.usage, pricing, groupRatio, billedModel).quota
 
-			await finalizeQuota(identity, requestId, quota).catch(() => {})
+			// Once billable work exists, a settlement fault must retain the hold,
+			// not fall through to the pre-upstream refund path.
+			reserved = false
+			let settlementError: unknown
+			try { await finalizeQuota(identity, requestId, quota) } catch (error) { settlementError = error }
 			// Output tokens were not known when the budget was checked.
 			await chargeTokenBudget(identity, args.usage.completionTokens).catch(() => {})
 			await recordUsage(
@@ -228,6 +233,7 @@ export async function relay(input: RelayInput): Promise<Response> {
 				{ buffered: input.recordBuffered ?? true },
 			).catch(() => {})
 			await releaseLease()
+			if (settlementError) throw settlementError
 		}
 
 		const ceiling = config.retryTimes + 1
@@ -284,14 +290,14 @@ export async function relay(input: RelayInput): Promise<Response> {
 					// Read the body before discarding it: the provider's message is
 					// the only thing that makes an upstream failure diagnosable.
 					const detail = await readCappedText(response).catch(() => "")
-					throw fromUpstream(response.status, detail, context.channel._id)
+					throw fromUpstream(response.status, sanitizeProviderError(detail, context.key.secret), context.channel._id)
 				}
 
-				return { response, wire, mappedModel: context.model.mapped }
+				return { response, wire, mappedModel: context.model.mapped, secret: context.key.secret }
 			},
 		)
 
-		const { response, wire, mappedModel } = outcome.value
+		const { response, wire, mappedModel, secret } = outcome.value
 		const firstByteMs = nowMs() - startedAt
 
 		if (!stream) {
@@ -326,7 +332,7 @@ export async function relay(input: RelayInput): Promise<Response> {
 			})
 			reserved = false
 
-			return jsonResponse(clientBody, { requestId })
+			return jsonResponse(redactProviderValue(clientBody, secret), { requestId })
 		}
 
 		// --- streaming -----------------------------------------------------
@@ -350,15 +356,20 @@ export async function relay(input: RelayInput): Promise<Response> {
 		// From here the reservation is owned by the stream. Nothing after this
 		// point may release it, because the function is about to return.
 		reserved = false
+		let finished = false
+		let cancelled = false
 
 		const finishStream = async (
 			controller: ReadableStreamDefaultController<Uint8Array>,
 			status: "success" | "error" | "aborted",
 			errorCode?: string,
 		): Promise<void> => {
+			if (finished) return
+			finished = true
+			void reader.cancel().catch(() => {})
 			const usage = normalizeUsage(translator.usage(), semantic)
 			const tail = framer.finish(translator.usage())
-			if (tail !== "") controller.enqueue(encoder.encode(tail))
+			if (!cancelled && tail !== "") controller.enqueue(encoder.encode(tail))
 			await settle({
 				usage,
 				channelId: outcome.channelId,
@@ -369,7 +380,7 @@ export async function relay(input: RelayInput): Promise<Response> {
 				errorCode,
 				firstByteMs,
 			})
-			controller.close()
+			if (!cancelled) controller.close()
 		}
 
 		const out = new ReadableStream<Uint8Array>({
@@ -381,16 +392,18 @@ export async function relay(input: RelayInput): Promise<Response> {
 			async pull(controller) {
 				// A pull that resolves without enqueuing is never called again,
 				// so keep reading until there is something to hand back.
-				for (;;) {
-					let result: ReadableStreamReadResult<Awaited<ReturnType<typeof reader.read>>["value"]>
+				while (!finished) {
+					let result: Awaited<ReturnType<typeof reader.read>>
 					try {
 						result = await reader.read()
 					} catch (error) {
+						if (finished) return
 						const gatewayError = GatewayError.from(error)
 						controller.enqueue(encoder.encode(errorSseChunk(gatewayError, clientDialect)))
 						await finishStream(controller, "error", gatewayError.code)
 						return
 					}
+					if (finished) return
 
 					if (result.done) {
 						await finishStream(controller, "success")
@@ -399,7 +412,13 @@ export async function relay(input: RelayInput): Promise<Response> {
 
 					let payload = ""
 					try {
-						for (const chunk of translator.handle(result.value)) {
+						const event = { ...result.value }
+						try {
+							event.data = JSON.stringify(redactProviderValue(JSON.parse(event.data), secret))
+						} catch {
+							// [DONE], comments and non-JSON sentinels are not JSON.
+						}
+						for (const chunk of translator.handle(event)) {
 							payload += framer.chunk(chunk)
 						}
 					} catch (error) {
@@ -411,19 +430,24 @@ export async function relay(input: RelayInput): Promise<Response> {
 
 					if (payload !== "") {
 						controller.enqueue(encoder.encode(payload))
-						return
 					}
-					if (translator.done()) {
+					// OpenAI's finish_reason precedes its usage-only frame.
+					// Only [DONE]/EOF terminates that wire format.
+					if ((wire === "openai" && result.value.data.trim() === "[DONE]") ||
+						(wire !== "openai" && translator.done())) {
 						await finishStream(controller, "success")
 						return
 					}
+					if (payload !== "") return
 				}
 			},
 
 			// The client hung up. Settle for what was actually consumed rather
 			// than letting the reservation expire silently (GW-009).
 			async cancel() {
-				await reader.cancel().catch(() => {})
+				cancelled = true
+				finished = true
+				void reader.cancel().catch(() => {})
 				await settle({
 					usage: normalizeUsage(translator.usage(), semantic),
 					channelId: outcome.channelId,

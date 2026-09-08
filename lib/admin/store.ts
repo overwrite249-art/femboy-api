@@ -19,7 +19,7 @@
 import { invalidateTokenCache } from "../auth/authenticate.ts"
 import { digestApiKey, generateApiKey, maskKey } from "../auth/keys.ts"
 import { config } from "../config/env.ts"
-import { channelKeys, channels, tokens, users } from "../db/index.ts"
+import { channelKeys, channels, tokens, users, getDb, COLLECTIONS } from "../db/index.ts"
 import type {
 	ChannelDoc,
 	ChannelKeyDoc,
@@ -32,6 +32,10 @@ import type {
 import { invalidateAbilities, rebuildAbilities } from "../routing/abilities.ts"
 import { invalidRequest, notFound } from "../http/errors.ts"
 import { randomAlphanumeric, randomHex, sealSecret } from "../util/crypto.ts"
+import type { PasswordRecord } from "./password.ts"
+import { QUOTA_LEDGER_VERSION, quotaAmount } from "../quota/index.ts"
+import { sanitizeParsed, isPlainObject } from "../util/json.ts"
+import { assertSafeHeaderName, assertSafeHeaderValue } from "../http/headers.ts"
 
 export type ListOptions = { limit?: number; skip?: number }
 
@@ -101,7 +105,21 @@ export async function findUserByUsername(username: string): Promise<UserDoc | nu
 	return await (await users()).findOne({ username })
 }
 
-export async function createUser(input: Record<string, unknown>): Promise<UserDoc> {
+/** Explicit response allowlist; password verifiers never leave the server. */
+export function userView(user: UserDoc) {
+	return {
+		_id: user._id, username: user.username, displayName: user.displayName,
+		email: user.email ?? "", role: user.role, status: user.status, group: user.group,
+		quota: user.quota, usedQuota: user.usedQuota, requestCount: user.requestCount,
+		rpmLimit: user.rpmLimit, tpmLimit: user.tpmLimit,
+		createdAt: user.createdAt, updatedAt: user.updatedAt, lastLoginAt: user.lastLoginAt,
+	}
+}
+
+export async function createUser(
+	input: Record<string, unknown>,
+	credentials: Partial<PasswordRecord> & { githubId?: string } = {},
+): Promise<UserDoc> {
 	const username = requireText(input.username, "username", 64)
 	const existing = await findUserByUsername(username)
 	if (existing) throw invalidRequest("that username is taken", "username")
@@ -113,17 +131,25 @@ export async function createUser(input: Record<string, unknown>): Promise<UserDo
 		displayName: typeof input.displayName === "string" && input.displayName.trim()
 			? input.displayName.trim().slice(0, 200)
 			: username,
-		email: typeof input.email === "string" ? input.email.trim().slice(0, 200) : "",
+		...(typeof input.email === "string" && input.email.trim()
+			? { email: input.email.trim().slice(0, 200) } : {}),
+		...credentials,
 		role: asRole(input.role, "user"),
 		status: asStatus(input.status, "enabled"),
 		group: typeof input.group === "string" && input.group.trim() ? input.group.trim() : "default",
-		quota: optionalNumber(input.quota, "quota", 0),
+		quota: quotaAmount(optionalNumber(input.quota, "quota", 0)),
+		quotaLedgerVersion: QUOTA_LEDGER_VERSION,
+		legacyUsedQuota: 0,
 		usedQuota: 0,
 		requestCount: 0,
 		createdAt: now,
 		updatedAt: now,
 	}
-	await (await users()).insertOne(doc)
+	await (await getDb()).transaction(async (db) => {
+		const collection = db.collection<UserDoc>(COLLECTIONS.users)
+		if (await collection.findOne({ username })) throw invalidRequest("that username is taken", "username")
+		await collection.insertOne(doc)
+	})
 	return doc
 }
 
@@ -134,19 +160,29 @@ export async function updateUser(id: string, patch: Record<string, unknown>): Pr
 	if (patch.displayName !== undefined) {
 		update.displayName = requireText(patch.displayName, "displayName")
 	}
-	if (patch.email !== undefined) update.email = String(patch.email).slice(0, 200)
+	if (patch.email !== undefined) update.email = String(patch.email).trim().slice(0, 200)
 	if (patch.role !== undefined) update.role = asRole(patch.role, user.role)
 	if (patch.status !== undefined) update.status = asStatus(patch.status, user.status)
 	if (patch.group !== undefined) update.group = requireText(patch.group, "group", 64)
-	if (patch.quota !== undefined) update.quota = optionalNumber(patch.quota, "quota", user.quota)
+	if (patch.quota !== undefined) update.quota = quotaAmount(optionalNumber(patch.quota, "quota", user.quota))
 	if (patch.rpmLimit !== undefined) update.rpmLimit = optionalNumber(patch.rpmLimit, "rpmLimit", 0)
 	if (patch.tpmLimit !== undefined) update.tpmLimit = optionalNumber(patch.tpmLimit, "tpmLimit", 0)
 
-	await (await users()).updateOne({ _id: id }, { $set: update })
+	const unsetEmail = update.email === ""
+	if (unsetEmail) delete update.email
+	await (await users()).updateOne({ _id: id }, { $set: update, ...(unsetEmail ? { $unset: { email: "" } } : {}) })
 
 	// A disabled user's tokens must stop working now, not when the cache expires.
-	const owned = await (await tokens()).find({ userId: id }, { limit: 200 })
-	for (const token of owned) await invalidateTokenCache(token.keyPrefix)
+	let after = ""
+	for (;;) {
+		const owned = await (await tokens()).find(
+			{ userId: id, ...(after ? { _id: { $gt: after } } : {}) },
+			{ sort: { _id: 1 }, limit: 200 },
+		)
+		for (const token of owned) await invalidateTokenCache(token.keyPrefix)
+		if (owned.length < 200) break
+		after = owned[owned.length - 1]._id
+	}
 
 	return await getUser(id)
 }
@@ -207,7 +243,8 @@ export async function createToken(
 		keyDigest: generated.digest,
 		keyLast4: generated.last4,
 		status: "enabled",
-		quota: optionalNumber(input.quota, "quota", 0),
+		quota: quotaAmount(optionalNumber(input.quota, "quota", 0)),
+		quotaLedgerVersion: QUOTA_LEDGER_VERSION,
 		usedQuota: 0,
 		unlimitedQuota: input.unlimitedQuota === true,
 		expiresAt,
@@ -229,7 +266,7 @@ export async function updateToken(
 
 	if (patch.name !== undefined) update.name = requireText(patch.name, "name", 120)
 	if (patch.status !== undefined) update.status = asStatus(patch.status, token.status)
-	if (patch.quota !== undefined) update.quota = optionalNumber(patch.quota, "quota", token.quota)
+	if (patch.quota !== undefined) update.quota = quotaAmount(optionalNumber(patch.quota, "quota", token.quota))
 	if (patch.unlimitedQuota !== undefined) update.unlimitedQuota = patch.unlimitedQuota === true
 	if (patch.allowedIps !== undefined) update.allowedIps = stringList(patch.allowedIps, "allowedIps")
 	if (patch.allowedModels !== undefined) {
@@ -342,12 +379,31 @@ function asHeaders(value: unknown): Record<string, string> {
 		const lower = requireText(name, "header name", 120).toLowerCase()
 		// The relay sets auth last so a channel header cannot override credentials,
 		// but there is no reason to accept one here either.
-		if (lower === "authorization" || lower === "x-api-key" || lower === "x-goog-api-key") {
+		if (["authorization", "x-api-key", "x-goog-api-key", "api-key", "mj-api-secret",
+			"cookie", "set-cookie", "proxy-authorization"].includes(lower)) {
 			throw invalidRequest("credential headers are managed by the gateway", "headers")
 		}
-		out[lower] = requireText(entry, "header value", 1000)
+		try {
+			out[assertSafeHeaderName(lower)] = assertSafeHeaderValue(lower, requireText(entry, "header value", 1000))
+		} catch {
+			throw invalidRequest("invalid channel header", "headers")
+		}
 	}
 	return out
+}
+
+function channelConfig(value: unknown): Record<string, unknown> {
+	if (value === undefined || value === null) return {}
+	if (!isPlainObject(value)) throw invalidRequest("config must be an object", "config")
+	const config = sanitizeParsed(value)
+	if (config.submitPaths !== undefined) {
+		const paths = stringList(config.submitPaths, "submitPaths")
+		if (paths.some((path) => !/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(path))) {
+			throw invalidRequest("submitPaths must contain exact, unencoded local paths")
+		}
+		config.submitPaths = paths
+	}
+	return config
 }
 
 async function sealKeysFor(channelId: string, secrets: string[]): Promise<ChannelKeyDoc[]> {
@@ -398,7 +454,7 @@ export async function createChannel(input: Record<string, unknown>): Promise<Cha
 		headers: asHeaders(input.headers),
 		autoDisabled: false,
 		failCount: 0,
-		config: {},
+		config: channelConfig(input.config),
 		createdAt: now,
 		updatedAt: now,
 	}
@@ -440,6 +496,7 @@ export async function updateChannel(
 	if (patch.models !== undefined) update.models = stringList(patch.models, "models")
 	if (patch.modelMapping !== undefined) update.modelMapping = asMapping(patch.modelMapping)
 	if (patch.headers !== undefined) update.headers = asHeaders(patch.headers)
+	if (patch.config !== undefined) update.config = channelConfig(patch.config)
 	if (patch.testModel !== undefined) update.testModel = String(patch.testModel).slice(0, 200)
 	if (patch.rpmLimit !== undefined) update.rpmLimit = optionalNumber(patch.rpmLimit, "rpmLimit", 0)
 

@@ -54,12 +54,8 @@ async function main(): Promise<void> {
 		process.exit(1)
 	}
 
-	const user = await createUser({ username, role: "root", quota: 0 })
 	const credentials = await hashPassword(password)
-	await collection.updateOne(
-		{ _id: user._id },
-		{ $set: { passwordHash: credentials.passwordHash, passwordSalt: credentials.passwordSalt } },
-	)
+	const user = await createUser({ username, role: "root", quota: 0 }, credentials)
 
 	const { key } = await createToken({
 		userId: user._id,

@@ -23,6 +23,8 @@ import {
 	usageLogs,
 	usageRollups,
 	users,
+	getDb,
+	COLLECTIONS,
 } from "../db/index.ts"
 import type {
 	AuditLogDoc,
@@ -32,6 +34,7 @@ import type {
 	RedemptionCodeDoc,
 	UsageLogDoc,
 	UsageRollupDoc,
+	UserDoc,
 } from "../db/types.ts"
 import { invalidRequest, notFound } from "../http/errors.ts"
 import { K } from "../redis/keys.ts"
@@ -40,6 +43,8 @@ import { invalidateAbilities } from "../routing/abilities.ts"
 import { PRICING_VERSION, normalizeModelName, quotaToUsd } from "../pricing/index.ts"
 import { randomAlphanumeric, randomHex, sha256Hex } from "../util/crypto.ts"
 import { monthBucket } from "../util/time.ts"
+import { enforceAttemptLimit } from "../ratelimit/index.ts"
+import { quotaAmount, QUOTA_LEDGER_VERSION } from "../quota/index.ts"
 
 function positive(value: unknown, field: string): number {
 	const parsed = typeof value === "number" ? value : Number(value)
@@ -177,7 +182,7 @@ export async function createRedemptionBatch(input: {
 	expiresAt?: Date | null
 }): Promise<{ batchId: string; codes: string[] }> {
 	const count = Math.min(Math.max(Math.floor(input.count), 1), MAX_BATCH)
-	const quota = positive(input.quota, "quota")
+	const quota = quotaAmount(positive(input.quota, "quota"))
 	const batchId = randomHex(8)
 	const docs: RedemptionCodeDoc[] = []
 	const codes: string[] = []
@@ -233,38 +238,33 @@ export async function redeemCode(
 		.replace(/[^A-Z0-9]/g, "")
 
 	const attemptKey = K.redeemAttempts(userId)
-	const attempts = (await redisGetJson<{ n: number }>(attemptKey))?.n ?? 0
-	if (attempts >= MAX_REDEEM_ATTEMPTS) {
-		throw invalidRequest("too many redemption attempts, try again later", "code")
-	}
+	await enforceAttemptLimit(attemptKey, MAX_REDEEM_ATTEMPTS, 3600,
+		"too many redemption attempts, try again later")
 
 	const digest = await codeDigestFor(code)
-	const claimed = await (await redemptionCodes()).findOneAndUpdate(
-		{ codeDigest: digest, status: "unused" },
-		{ $set: { status: "used", usedBy: userId, usedAt: new Date() } },
-	)
-
-	if (!claimed) {
-		await redisSetJson(attemptKey, { n: attempts + 1 }, 3600)
-		// Deliberately identical for "never existed", "already used", and
-		// "disabled": the response must not confirm a guess.
-		throw invalidRequest("that code is not valid", "code")
-	}
-
-	if (claimed.expiresAt && new Date(claimed.expiresAt).getTime() < Date.now()) {
-		// Put it back so an expired code is not silently consumed.
-		await (await redemptionCodes()).updateOne(
-			{ _id: claimed._id },
-			{ $set: { status: "unused", usedBy: null, usedAt: null } },
+	return (await getDb()).transaction(async (db) => {
+		const account = db.collection<UserDoc>(COLLECTIONS.users)
+		const user = await account.findOne({ _id: userId, status: "enabled" })
+		if (!user || user.quotaLedgerVersion !== QUOTA_LEDGER_VERSION) {
+			throw invalidRequest("this account must be active and its quota ledger upgraded")
+		}
+		const claimed = await db.collection<RedemptionCodeDoc>(COLLECTIONS.redemptionCodes).findOneAndUpdate(
+			{
+				codeDigest: digest, status: "unused",
+				$or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+			},
+			{ $set: { status: "used", usedBy: userId, usedAt: new Date() } },
 		)
-		throw invalidRequest("that code is not valid", "code")
-	}
-
-	await (await users()).updateOne({ _id: userId }, { $inc: { quota: claimed.quota } })
-	// The balance is cached in Redis, so drop it or the credit is invisible.
-	await redisDel(K.userQuota(userId))
-	const user = await (await users()).findOne({ _id: userId })
-	return { quota: claimed.quota, balance: user?.quota ?? claimed.quota }
+		if (!claimed) throw invalidRequest("that code is not valid", "code")
+		const credit = quotaAmount(claimed.quota)
+		if (!Number.isSafeInteger(user.quota + credit)) throw invalidRequest("account balance is too large")
+		const updated = await account.findOneAndUpdate(
+			{ _id: userId }, { $inc: { quota: credit }, $set: { updatedAt: new Date() } },
+		)
+		if (!updated) throw invalidRequest("account not found")
+		// Claim and credit commit together. Never drop/reseed a hot balance.
+		return { quota: credit, balance: updated.quota }
+	})
 }
 
 // ---------------------------------------------------------------------------

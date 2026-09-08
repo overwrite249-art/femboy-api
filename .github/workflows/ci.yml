@@ -5,30 +5,58 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          bun-version: latest
-
-      - name: Install
-        run: bun install
-
-      - name: Unit and security tests
-        run: bun test
-
-      - name: Typecheck
-        run: bunx tsc --noEmit
-
-      - name: Secret scan
-        run: bun scripts/check-secrets.ts
-
-      - name: Build
-        run: bun run build
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run verify:billing
+      - run: npm run check:secrets
+      - run: npm run build
         env:
-          # A build must not require live services. If it does, that is the bug.
           NEXT_TELEMETRY_DISABLED: "1"
+
+  mongo-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Start disposable MongoDB replica set
+        run: |
+          docker run -d --name mongo -p 127.0.0.1:27017:27017 mongo:8.0.12 --replSet rs0 --bind_ip_all
+          for attempt in $(seq 1 60); do
+            if docker exec mongo mongosh --quiet --eval 'db.adminCommand({ping: 1}).ok' >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+          for attempt in $(seq 1 60); do
+            if docker exec mongo mongosh --quiet --eval 'quit(db.hello().isWritablePrimary ? 0 : 1)'; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - run: npm run test:integration
+        env:
+          MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true
+      - name: Stop test database
+        if: always()
+        run: docker rm -f mongo
