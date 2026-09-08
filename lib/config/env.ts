@@ -75,6 +75,9 @@ export const config = {
 	get redisToken(): string {
 		return envStr("UPSTASH_REDIS_REST_TOKEN")
 	},
+	get coordinationBackend(): string {
+		return envStr("COORDINATION_BACKEND", "auto").toLowerCase()
+	},
 
 	// ---- secrets -----------------------------------------------------------
 	get keyPepper(): string {
@@ -290,8 +293,6 @@ export type AppConfig = typeof config
 /** Secrets that must be present before the gateway may serve production traffic. */
 export const REQUIRED_PRODUCTION_SECRETS = [
 	"MONGODB_URI",
-	"UPSTASH_REDIS_REST_URL",
-	"UPSTASH_REDIS_REST_TOKEN",
 	"KEY_PEPPER",
 	"CHANNEL_KEY_MASTER",
 	"SESSION_SECRET",
@@ -339,6 +340,14 @@ export function validateConfig(): ConfigIssue[] {
 				issues.push({ name, problem: "looks like a placeholder value" })
 			}
 		}
+	}
+	const backend = config.coordinationBackend
+	if (!["auto", "mongo", "upstash"].includes(backend)) {
+		issues.push({ name: "COORDINATION_BACKEND", problem: "must be auto, mongo or upstash" })
+	}
+	if (backend === "upstash" || (backend === "auto" && (config.redisUrl || config.redisToken))) {
+		if (!config.redisUrl) issues.push({ name: "UPSTASH_REDIS_REST_URL", problem: "missing" })
+		if (!config.redisToken) issues.push({ name: "UPSTASH_REDIS_REST_TOKEN", problem: "missing" })
 	}
 	if (config.quotaPerUnit <= 0) {
 		issues.push({ name: "QUOTA_PER_UNIT", problem: "must be > 0" })

@@ -1,9 +1,8 @@
 /**
  * Redis access layer.
  *
- * Talks to Upstash over its REST API (works on every runtime, including Edge,
- * without a TCP socket) and transparently falls back to the in-process twin
- * when no credentials are configured.
+ * Uses MongoDB coordination by default when MongoDB is configured. Upstash
+ * remains optional. Only development/test without services uses a memory twin.
  *
  * IMPORTANT (GW-015): the limiter must never fail open. If Redis is
  * unreachable, `isDegraded()` becomes true and the caller is expected to apply
@@ -14,13 +13,15 @@ import { config, isProduction, ConfigurationError } from "../config/env.ts"
 import { MemoryRedis } from "./memory.ts"
 import { SCRIPTS, type ScriptName } from "./lua.ts"
 import { randomHex } from "../util/crypto.ts"
+import { MongoCoordinator } from "./mongo.ts"
 
-export type RedisKind = "upstash" | "memory"
+export type RedisKind = "upstash" | "mongo" | "memory"
 
 export type RedisLike = {
 	readonly kind: RedisKind
 	command(args: Array<string | number>): Promise<unknown>
 	pipeline(commands: Array<Array<string | number>>): Promise<unknown[]>
+	runScript?(name: ScriptName, keys: string[], args: Array<string | number>): Promise<number[]>
 }
 
 class UpstashRedis implements RedisLike {
@@ -83,14 +84,22 @@ let lastError = ""
 
 export function getRedis(): RedisLike {
 	if (instance) {
-		if (isProduction() && instance.kind === "memory") throw new ConfigurationError("production requires shared Redis")
+		if (isProduction() && instance.kind === "memory") throw new ConfigurationError("production requires shared coordination")
 		return instance
 	}
 	const url = config.redisUrl
 	const token = config.redisToken
-	if ((url && !token) || (token && !url) || (isProduction() && (!url || !token))) {
+	const backend = config.coordinationBackend
+	if (!["auto", "mongo", "upstash"].includes(backend)) throw new ConfigurationError("invalid COORDINATION_BACKEND")
+	if (backend === "mongo" || (backend === "auto" && !url && !token && config.mongoUri)) {
+		if (!config.mongoUri) throw new ConfigurationError("MongoDB coordination requires MONGODB_URI")
+		instance = new MongoCoordinator()
+		return instance
+	}
+	if ((url && !token) || (token && !url) || (backend === "upstash" && (!url || !token))) {
 		throw new ConfigurationError("both Upstash Redis URL and token are required")
 	}
+	if (isProduction() && !url && !token) throw new ConfigurationError("production requires durable shared coordination")
 	instance = url && token ? new UpstashRedis(url, token) : new MemoryRedis()
 	return instance
 }
@@ -218,6 +227,17 @@ export async function runScript(
 	if (redis.kind === "upstash") {
 		const raw = await redisCommand(["EVAL", SCRIPTS[name], keys.length, ...keys, ...args])
 		return normalizeScriptResult(raw)
+	}
+	if (redis.kind === "mongo") {
+		try {
+			if (!redis.runScript) throw new ConfigurationError("MongoDB coordination is unavailable")
+			const result = await redis.runScript(name, keys, args)
+			markHealthy()
+			return result
+		} catch (error) {
+			markDegraded(error)
+			throw error
+		}
 	}
 	const { runScriptTwin } = await import("./scripts.ts")
 	return runScriptTwin(redis, name, keys, args)

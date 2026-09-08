@@ -33,7 +33,9 @@ application and the provider:
   paths redact the credential used for that request, with regression coverage.
 
 It runs entirely on serverless primitives: Next.js route handlers on Vercel,
-MongoDB Atlas for durable state, Upstash Redis for the hot path.
+MongoDB Atlas for durable state, shared rate limits, locks and queues.
+**MongoDB-only deployment is supported; Redis is optional.** See
+[MongoDB-only operations](docs/MONGODB-ONLY.md) for durability and scaling tradeoffs.
 
 ---
 
@@ -74,8 +76,9 @@ for v in KEY_PEPPER CHANNEL_KEY_MASTER SESSION_SECRET CRON_SECRET IP_HASH_SECRET
 done >> .env.local
 ```
 
-Add your `MONGODB_URI` (Atlas or a transaction-capable replica set), both Upstash
-values, and `PUBLIC_BASE_URL`. Next loads `.env.local`; standalone Node scripts
+Add your `MONGODB_URI` (Atlas or a transaction-capable replica set) and
+`PUBLIC_BASE_URL`. Keep `COORDINATION_BACKEND=mongo` to run without Redis.
+Next loads `.env.local`; standalone Node scripts
 need `--env-file` or exported environment variables. Then:
 
 ```bash
@@ -89,7 +92,8 @@ The console is at `http://localhost:3000`, the API at `http://localhost:3000/v1`
 
 ### Running with no services at all
 
-In development/test only, omit `MONGODB_URI` and both Upstash variables to use
+In development/test only, use `COORDINATION_BACKEND=auto` and omit `MONGODB_URI`
+and both Upstash variables to use
 in-process twins. Nothing survives a restart, and state is not shared across
 processes. **Production refuses this fallback.** The regular tests inject these twins:
 
@@ -126,7 +130,8 @@ external scheduler's history before accepting traffic.
 > **Note.** The relay runs on the Node runtime rather than Edge. The MongoDB
 > driver needs a TCP socket, which Edge does not provide. The hot path still
 > checks current account/key authority in Mongo, and reserves/settles funds in
-> Mongo transactions. Redis remains required for shared admission and recovery.
+> Mongo transactions. Shared admission, caches and queues also use MongoDB in
+> MongoDB-only mode; optional Upstash can move coordination to a separate service.
 
 ---
 
@@ -169,7 +174,7 @@ reduce risk; they do not certify that every vulnerability has been found.
 - Durable user/token balances and request journals commit together in MongoDB.
 - Registration cannot assign paid quota, privileged roles or premium groups.
 - Cached credentials do not preserve revoked privileges; logout revokes copied sessions.
-- Atomic shared rate limits fail closed when Redis is unavailable.
+- Atomic shared rate limits fail closed when the configured coordinator is unavailable.
 - Validated DNS addresses are pinned to the actual socket; cross-origin redirects
   cannot forward provider credentials or request bodies.
 - Async submissions are allowlisted and task references are owner-scoped.

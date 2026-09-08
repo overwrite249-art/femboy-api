@@ -23,8 +23,8 @@ export default function LandingPage() {
 			<p>
 				A gateway that accepts OpenAI, Anthropic and Gemini requests, routes them
 				across your provider accounts with health-aware load balancing, and bills
-				every token to the account that spent it. Runs on Vercel with MongoDB and
-				Upstash Redis.
+				every token to the account that spent it. Runs on Vercel with MongoDB.
+				Shared rate limits and queues work without a separate Redis service.
 			</p>
 
 			<div className="hero-actions">

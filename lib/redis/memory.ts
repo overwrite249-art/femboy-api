@@ -13,9 +13,34 @@ type Entry = {
 	expiresAt: number | null
 }
 
+/** A single bounded value's portable state, also used by Mongo's interpreter. */
+export type ValueSnapshot = {
+	type: "scalar" | "hash" | "array"
+	value: string | string[][] | Array<string> | Array<{ score: number; member: string }>
+	expiresAt: number | null
+}
+
 export class MemoryRedis {
 	readonly kind = "memory" as const
 	private store = new Map<string, Entry>()
+
+	/** Copies state into a request-local interpreter; never establishes storage. */
+	importValue(key: string, snapshot: ValueSnapshot): void {
+		const value = snapshot.type === "hash"
+			? new Map((snapshot.value as string[][]).map(([field, item]) => [field, item]))
+			: structuredClone(snapshot.value) as Entry["value"]
+		this.store.set(key, { value, expiresAt: snapshot.expiresAt })
+	}
+
+	exportValue(key: string): ValueSnapshot | null {
+		const entry = this.live(key)
+		if (!entry) return null
+		return {
+			type: entry.value instanceof Map ? "hash" : Array.isArray(entry.value) ? "array" : "scalar",
+			value: entry.value instanceof Map ? [...entry.value.entries()] : structuredClone(entry.value),
+			expiresAt: entry.expiresAt,
+		}
+	}
 
 	// -- housekeeping --------------------------------------------------------
 
@@ -212,7 +237,7 @@ export class MemoryRedis {
 			case "LPUSH": {
 				const list = this.list(a[1], true)
 				if (!list) return 0
-				list.unshift(...a.slice(2))
+				for (const value of a.slice(2)) list.unshift(value)
 				return list.length
 			}
 			case "LRANGE": {

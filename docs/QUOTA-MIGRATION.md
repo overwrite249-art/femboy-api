@@ -78,9 +78,13 @@ refunded automatically at expiry**. The authenticated reconciliation job drains
 `quota:settlements:v2` and reports expired pending holds. Unknown usage must be
 reconciled from receipts before a correction; analytics cannot prove zero cost.
 
-Measured settlement can recover from a temporary Mongo failure while Redis
-remains available. A crash before the measurement is persisted, or loss of both
-stores, still needs operator review. Actual cost can exceed the reserved estimate.
+With optional Upstash coordination, measured settlement can recover from a
+temporary Mongo failure while Redis remains available. In MongoDB-only mode
+there is no independent recovery store: a database-wide outage can prevent both
+settlement and its recovery-queue write. This fails rather than acknowledging a
+non-durable measurement. Pending holds remain for operator review; unknown
+usage is never silently refunded. A crash before the measurement is persisted
+also needs operator review. Actual cost can exceed the reserved estimate.
 
 ## Rollback
 

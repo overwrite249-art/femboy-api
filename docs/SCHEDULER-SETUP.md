@@ -6,8 +6,9 @@ daily schedules only, which is insufficient for usage flushing and task polling.
 
 ## Before connecting
 
-1. Set the required MongoDB, Upstash Redis and signing/encryption secrets in
-   Vercel's environment settings. Never commit a populated environment file.
+1. Set the MongoDB connection and signing/encryption secrets in Vercel's
+   environment settings. Use `COORDINATION_BACKEND=mongo` for MongoDB-only
+   operation; Redis is not required. Never commit a populated environment file.
 2. Set `PUBLIC_BASE_URL` to a **stable HTTPS production origin**, with no path,
    port, credentials, query or fragment. Do not use a per-deployment preview URL.
 3. Set a unique `CRON_SECRET` of at least 32 random characters.

@@ -15,6 +15,13 @@ import { COLLECTIONS, usageCollectionName } from "./types.ts"
 import type { Database, IndexSpec } from "./driver.ts"
 
 export const INDEXES: Record<string, IndexSpec[]> = {
+	coordination_keys: [
+		{ key: { expiresAt: 1 }, name: "ttl_coordination_keys", expireAfterSeconds: 0 },
+	],
+	coordination_items: [
+		{ key: { key: 1, generation: 1, position: 1 }, name: "queue_position", unique: true },
+		{ key: { expiresAt: 1 }, name: "ttl_coordination_items", expireAfterSeconds: 0 },
+	],
 	[COLLECTIONS.users]: [
 		{ key: { username: 1 }, name: "uniq_username", unique: true },
 		{ key: { email: 1 }, name: "uniq_email", unique: true, sparse: true },
