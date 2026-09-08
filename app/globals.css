@@ -85,6 +85,10 @@ h4 {
 
 /* Setup reuses the console's typography and surfaces. */
 .setup-content { max-width: 840px; }
+.setup-content a.link, .setup-guide a.link { text-decoration: underline; text-underline-offset: 3px; }
+.setup-content .panel-body { padding: 24px; }
+.setup-content .panel-head { flex-wrap: wrap; gap: 8px; }
+.setup-content .hint, .setup-content .panel-note { color: var(--text-2); }
 .setup-intro, .setup-copy { margin: 0 0 24px; max-width: 70ch; }
 .setup-content > .callout, .setup-content > [role="status"] { margin-bottom: 24px; }
 .setup-steps { margin: 0; padding-left: 24px; }
@@ -103,6 +107,7 @@ h4 {
 .setup-guide-steps h2 { font-size: 24px; }
 .setup-guide-steps p { margin: 12px 0 0; }
 @media (max-width: 480px) {
+	.setup-content .panel-body { padding: 16px; }
 	.setup-job { align-items: flex-start; flex-direction: column; gap: 8px; }
 	.setup-form .btn { width: 100%; }
 }
