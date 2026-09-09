@@ -1,7 +1,7 @@
 "use client"
 import { useRef, useState } from "react"
 import type { FormEvent } from "react"
-import { Paintbrush, Pencil, Save, ShieldCheck } from "lucide-react"
+import { Pencil, Save, ShieldCheck } from "lucide-react"
 import {
 	ThemePicker,
 	useConfirm,
@@ -79,11 +79,8 @@ export default function SettingsPage() {
 			<div className="split section">
 				<Panel title="Appearance" note="This browser only">
 					<div className="appearance-row">
-						<span className="empty-icon">
-							<Paintbrush size={24} />
-						</span>
 						<div>
-							<h3>Your preferred theme</h3>
+							<h3>Theme</h3>
 							<p className="hint">Choose light, dark, or follow your system.</p>
 						</div>
 					</div>
