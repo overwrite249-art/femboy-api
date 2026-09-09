@@ -43,9 +43,9 @@ export default function DocsPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="DEVELOPER REFERENCE"
-				title="Build once. Connect more."
-				description="A practical starting point for your gateway, from your first request to production integration."
+				eyebrow="Reference"
+				title="API reference"
+				description="Endpoints, parameters and examples, from a first request to production integration."
 				actions={
 					<Link className="btn btn-primary" href="/console/playground">
 						<Play size={16} />

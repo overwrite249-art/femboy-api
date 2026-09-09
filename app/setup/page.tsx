@@ -20,10 +20,12 @@ export default function SetupGuide() {
 				<div className="page-heading">
 					<div>
 						<span className="eyebrow">DEPLOYMENT GUIDE</span>
-						<h1>Your gateway. Ready for takeoff.</h1>
+						<h1>Four steps to a working deployment.</h1>
 						<p>
-							Four deliberate steps from your infrastructure to your first
-							request. Keep secrets private all the way through.
+							Configure storage and secrets, create the first administrator,
+							connect the scheduler, then verify with a real request. Secrets
+							belong in your hosting provider’s environment, not in the
+							repository.
 						</p>
 					</div>
 				</div>

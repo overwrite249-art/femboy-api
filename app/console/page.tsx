@@ -1,22 +1,6 @@
 "use client"
 import Link from "next/link"
-import {
-	Activity,
-	ArrowRight,
-	ArrowUpRight,
-	BookOpen,
-	Boxes,
-	Check,
-	Code2,
-	Coins,
-	KeyRound,
-	Play,
-	Plus,
-	ShieldCheck,
-	Sparkles,
-	UsersRound,
-	Zap,
-} from "lucide-react"
+import { Activity, ArrowUpRight, Play, ShieldCheck } from "lucide-react"
 import { CopyButton } from "../components/interface.tsx"
 import { useSession } from "./session-context.tsx"
 import { Quickstart, useOrigin } from "./quickstart.tsx"
@@ -68,22 +52,20 @@ export default function OverviewPage() {
 		return (
 			<>
 				<PageHeader
-					eyebrow="YOUR WORKSPACE"
-					title={`Welcome, ${user?.displayName || user?.username || "there"}`}
-					description="One endpoint for your AI workflow. Explore the reference or try a request with your gateway key."
+					eyebrow="Console"
+					title="Your access"
+					description="Send requests with a gateway key issued to your account. The reference documents the supported endpoints."
 				/>
 				<div className="quick-actions">
 					<Link href="/console/playground" className="quick-action">
-						<Play />
-						<strong>Open playground</strong>
-						<span>Try your configured models</span>
-						<ArrowUpRight />
+						<strong>Playground</strong>
+						<span>Send a request to a configured model</span>
+						<ArrowUpRight size={16} />
 					</Link>
 					<Link href="/console/docs" className="quick-action">
-						<BookOpen />
-						<strong>Start building</strong>
-						<span>Integrate with your favorite SDK</span>
-						<ArrowUpRight />
+						<strong>API reference</strong>
+						<span>Endpoints, parameters and examples</span>
+						<ArrowUpRight size={16} />
 					</Link>
 				</div>
 				<Quickstart />
@@ -92,9 +74,9 @@ export default function OverviewPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="WORKSPACE OVERVIEW"
-				title={`Welcome back, ${user?.displayName || user?.username || "there"}`}
-				description="A little less infrastructure. A lot more possibility."
+				eyebrow="Console"
+				title="Overview"
+				description="Recorded usage for the current UTC month, plus the configuration of this deployment."
 				actions={
 					<>
 						<RefreshButton
@@ -129,13 +111,11 @@ export default function OverviewPage() {
 								label="Total requests"
 								value={formatNumber(data.summary.requests)}
 								sub="Requests this month"
-								icon={<Activity size={18} />}
 							/>
 							<StatCard
 								label="Total spend"
 								value={formatUsd(data.summary.usd)}
 								sub={`${formatNumber(data.summary.quota)} quota units`}
-								icon={<Coins size={18} />}
 							/>
 							<StatCard
 								label="Tokens processed"
@@ -143,7 +123,6 @@ export default function OverviewPage() {
 									data.summary.promptTokens + data.summary.completionTokens,
 								)}
 								sub={`${formatNumber(data.summary.promptTokens)} input · ${formatNumber(data.summary.completionTokens)} output`}
-								icon={<Zap size={18} />}
 							/>
 							<StatCard
 								label="Error rate"
@@ -156,143 +135,69 @@ export default function OverviewPage() {
 										? `${formatNumber(data.summary.errors)} failed requests`
 										: "No traffic recorded yet"
 								}
-								icon={<ShieldCheck size={18} />}
 							/>
 						</div>
 					</div>
-					<div className="overview-grid section">
-						<section className="launch-card">
-							<div className="launch-badge">
-								<Sparkles size={15} />
-								{data.inventory.channels
-									? "BUILD WITH YOUR GATEWAY"
-									: "LET’S GET YOU CONNECTED"}
-							</div>
-							<h2>
-								{data.inventory.channels
-									? "Your next idea starts here."
-									: "One gateway.\nEndless possibilities."}
-							</h2>
-							<p>
-								{data.inventory.channels
-									? "Your provider connections are in place. Explore a model, scope an API key, and start building."
-									: "Connect a provider, create your first API key, and bring your favorite models into one workspace."}
-							</p>
-							<div className="launch-actions">
-								<Link
-									className="btn btn-white"
-									href={
-										data.inventory.channels
-											? "/console/playground"
-											: "/console/channels#create"
-									}
-								>
-									{data.inventory.channels ? (
-										<Play size={16} />
-									) : (
-										<Plus size={16} />
-									)}
-									{data.inventory.channels
-										? "Try a request"
-										: "Connect a provider"}
-									<ArrowRight size={16} />
-								</Link>
-								<Link className="launch-link" href="/console/docs">
-									Read the guide <ArrowUpRight size={15} />
-								</Link>
-							</div>
-							<div className="provider-strip">
-								<span>OpenAI</span>
-								<span>Anthropic</span>
-								<span>Gemini</span>
-								<span>+ compatible APIs</span>
-							</div>
-						</section>
-						<Panel title="Your launch checklist" note="Configuration">
-							<div className="checklist">
-								{[
-									{
-										done: data.inventory.channels > 0,
-										title: "Connect a provider",
-										sub: `${data.inventory.enabledChannels} enabled · ${data.inventory.channels} total channels`,
-										href: "/console/channels",
-										icon: Boxes,
-									},
-									{
-										done: data.inventory.tokens > 0,
-										title: "Create a gateway key",
-										sub: "Scoped access for your applications",
-										href: "/console/tokens",
-										icon: KeyRound,
-									},
-									{
-										done: data.summary.requests > 0,
-										title: "Send your first request",
-										sub: "A funded user balance is required",
-										href: "/console/playground",
-										icon: Code2,
-									},
-								].map((step, index) => (
-									<Link
-										className="checklist-item"
-										href={step.href}
-										key={step.href}
-									>
-										<span
-											className={step.done ? "step-number done" : "step-number"}
-										>
-											{step.done ? <Check size={16} /> : index + 1}
-										</span>
-										<span>
-											<strong>{step.title}</strong>
-											<small>{step.sub}</small>
-										</span>
-										<ArrowRight size={16} />
-									</Link>
-								))}
-							</div>
+					<div className="section">
+						<div className="section-head">
+							<h2 className="section-title">Configuration</h2>
 							<Link
 								className="subtle-link"
 								href={
 									user?.role === "root" ? "/console/setup" : "/console/docs"
 								}
 							>
-								View deployment guidance <ArrowUpRight size={15} />
+								Deployment guidance <ArrowUpRight size={15} />
 							</Link>
-						</Panel>
-					</div>
-					<div className="quick-actions section">
-						{[
-							{
-								href: "/console/channels",
-								icon: Boxes,
-								title: "Provider channels",
-								sub: `${data.inventory.channels} connected channels`,
-							},
-							{
-								href: "/console/tokens",
-								icon: KeyRound,
-								title: "Gateway keys",
-								sub: `${data.inventory.tokens} issued tokens`,
-							},
-							{
-								href: "/console/users",
-								icon: UsersRound,
-								title: "People & balances",
-								sub: `${data.inventory.users} workspace users`,
-							},
-						].map((action) => (
-							<Link
-								className="quick-action"
-								key={action.href}
-								href={action.href}
-							>
-								<action.icon size={21} />
-								<strong>{action.title}</strong>
-								<span>{action.sub}</span>
-								<ArrowUpRight size={18} />
-							</Link>
-						))}
+						</div>
+						<dl className="state-list">
+							{[
+								{
+									label: "Provider channels",
+									ready: data.inventory.channels > 0,
+									detail: data.inventory.channels
+										? `${data.inventory.enabledChannels} enabled of ${data.inventory.channels}`
+										: "None configured",
+									href: "/console/channels",
+								},
+								{
+									label: "Gateway keys",
+									ready: data.inventory.tokens > 0,
+									detail: data.inventory.tokens
+										? `${formatNumber(data.inventory.tokens)} issued`
+										: "None issued",
+									href: "/console/tokens",
+								},
+								{
+									label: "People & balances",
+									ready: data.inventory.users > 0,
+									detail: `${formatNumber(data.inventory.users)} users`,
+									href: "/console/users",
+								},
+								{
+									label: "Recorded requests",
+									ready: data.summary.requests > 0,
+									detail: data.summary.requests
+										? `${formatNumber(data.summary.requests)} this month`
+										: "A funded user balance is required",
+									href: "/console/playground",
+								},
+							].map((row) => (
+								<div key={row.label}>
+									<dt>
+										<Link className="link" href={row.href}>
+											{row.label}
+										</Link>
+									</dt>
+									<dd>
+										<span className="state-flag">
+											{row.ready ? "ready" : "pending"}
+										</span>
+										{row.detail}
+									</dd>
+								</div>
+							))}
+						</dl>
 					</div>
 					<div className="overview-grid section">
 						<Panel
@@ -329,7 +234,7 @@ export default function OverviewPage() {
 								</table>
 							) : (
 								<Empty>
-									<h3>Your next request belongs here</h3>
+									<h3>No usage recorded yet</h3>
 									<p>
 										Usage appears after requests are recorded and rolled up. We
 										never fill this view with sample traffic.
@@ -379,7 +284,7 @@ export default function OverviewPage() {
 					</div>
 					<div className="section">
 						<div className="section-head">
-							<h2 className="section-title">From idea to API call</h2>
+							<h2 className="section-title">Request example</h2>
 							<Link className="subtle-link" href="/console/docs">
 								API reference <ArrowUpRight size={15} />
 							</Link>

@@ -3,12 +3,10 @@ import { useEffect, useRef, useState } from "react"
 import type { FormEvent } from "react"
 import {
 	ArrowRight,
-	Braces,
 	CircleStop,
 	Code2,
 	Eraser,
 	KeyRound,
-	MessageSquare,
 	Play,
 	ShieldCheck,
 	Sparkles,
@@ -152,8 +150,8 @@ export default function PlaygroundPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="DEVELOPER WORKSPACE"
-				title="A little room to experiment."
+				eyebrow="Workspace"
+				title="Playground"
 				description="Try a model, inspect its response, and take the working request into your code."
 				actions={
 					<Link href="/console/docs" className="btn">
@@ -412,11 +410,7 @@ export default function PlaygroundPage() {
 								</>
 							) : (
 								<Empty>
-									<span>
-										<MessageSquare size={24} />
-										<Braces size={24} />
-									</span>
-									<h3>Make something happen</h3>
+									<h3>No response yet</h3>
 									<p>
 										Your model’s response will appear here. Add a gateway key
 										and a configured model to send your first request.

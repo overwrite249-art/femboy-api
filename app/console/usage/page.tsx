@@ -1,13 +1,6 @@
 "use client"
 import { useState } from "react"
-import {
-	Activity,
-	AlertTriangle,
-	Coins,
-	Download,
-	Eye,
-	Zap,
-} from "lucide-react"
+import { Activity, Download, Eye } from "lucide-react"
 import { CopyButton, Dialog } from "../../components/interface.tsx"
 import {
 	downloadCsv,
@@ -125,9 +118,9 @@ export default function UsagePage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="OBSERVABILITY"
-				title="Every request tells a story."
-				description="Understand your traffic, inspect failures, and keep model spending in view—without storing prompt content."
+				eyebrow="Workspace"
+				title="Usage & logs"
+				description="Inspect traffic, failures and model spend. Prompt content is not stored."
 				actions={
 					<>
 						<RefreshButton
@@ -182,25 +175,21 @@ export default function UsagePage() {
 						label="Requests"
 						value={formatNumber(data.requests)}
 						sub="All requests in the selected month"
-						icon={<Activity size={18} />}
 					/>
 					<StatCard
 						label="Spend"
 						value={formatUsd(data.usd)}
 						sub={`${formatNumber(data.quota)} quota units`}
-						icon={<Coins size={18} />}
 					/>
 					<StatCard
 						label="Errors"
 						value={formatNumber(data.errors)}
 						sub={`${formatPercent(data.errors, data.requests)} of requests`}
-						icon={<AlertTriangle size={18} />}
 					/>
 					<StatCard
 						label="Tokens"
 						value={formatNumber(data.promptTokens + data.completionTokens)}
 						sub={`${formatNumber(data.promptTokens)} input tokens`}
-						icon={<Zap size={18} />}
 					/>
 				</div>
 			) : null}
@@ -237,7 +226,7 @@ export default function UsagePage() {
 						<h3>
 							{query || status !== "all"
 								? "No requests match this view"
-								: "A clear view, ready for traffic"}
+								: "No requests recorded yet"}
 						</h3>
 						<p>
 							Requests appear here after usage is flushed. Monthly totals are

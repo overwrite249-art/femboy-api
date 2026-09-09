@@ -7,7 +7,6 @@ import {
 	ArrowUpRight,
 	CheckCircle2,
 	Clock3,
-	KeyRound,
 	PlugZap,
 	ShieldCheck,
 } from "lucide-react"
@@ -90,9 +89,9 @@ export default function SetupPage() {
 	return (
 		<div className="setup-content">
 			<PageHeader
-				eyebrow="DEPLOYMENT CONTROL"
-				title="Keep the quiet work running."
-				description="Connect your maintenance scheduler once. Keep health checks, usage flushing, and housekeeping on schedule."
+				eyebrow="System"
+				title="Deployment"
+				description="Connect the maintenance scheduler once. Health checks, usage flushing and housekeeping then run on schedule."
 				actions={
 					<>
 						<RefreshButton onClick={status.reload} loading={status.loading} />
@@ -255,7 +254,7 @@ export default function SetupPage() {
 			{data ? (
 				<section className="section">
 					<div className="section-head">
-						<h2 className="section-title">The maintenance lineup</h2>
+						<h2 className="section-title">Maintenance jobs</h2>
 						<span className="section-note">
 							{data.jobs.length} jobs · all times UTC
 						</span>

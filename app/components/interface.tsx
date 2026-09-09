@@ -14,7 +14,6 @@ import {
 	Check,
 	CheckCircle2,
 	Copy,
-	Layers3,
 	Monitor,
 	Moon,
 	ShieldAlert,
@@ -150,15 +149,14 @@ export const useConfirm = () => useContext(ConfirmContext)
 export function Brand({ compact = false }: { compact?: boolean }) {
 	return (
 		<span className="brand">
-			<span className="brand-mark">
-				<Layers3 size={22} strokeWidth={2} />
+			<span className="brand-mark" aria-hidden="true">
+				f/
 			</span>
 			{!compact ? (
 				<span>
 					<span className="brand-name">
 						femboy<span className="brand-api"> / api</span>
 					</span>
-					<span className="brand-sub">AI GATEWAY</span>
 				</span>
 			) : null}
 		</span>

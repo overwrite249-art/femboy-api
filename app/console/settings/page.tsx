@@ -70,8 +70,8 @@ export default function SettingsPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="WORKSPACE PREFERENCES"
-				title="Make this space yours."
+				eyebrow="System"
+				title="Settings"
 				description="Personalize the console and review non-secret gateway configuration."
 				actions={<RefreshButton onClick={list.reload} loading={list.loading} />}
 			/>
@@ -120,7 +120,7 @@ export default function SettingsPage() {
 						<Loading />
 					) : !rows.length ? (
 						<Empty>
-							<h3>Clean defaults. Less to maintain.</h3>
+							<h3>No stored settings</h3>
 							<p>
 								No settings have been stored in this table. Environment
 								variables and built-in defaults remain separate.

@@ -210,8 +210,8 @@ export default function TokensPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="APPLICATION ACCESS"
-				title="Keys to your next idea."
+				eyebrow="Manage"
+				title="API keys"
 				description="Issue scoped gateway keys, set limits, and rotate credentials without touching provider accounts."
 				actions={
 					<>
@@ -288,9 +288,7 @@ export default function TokensPage() {
 					) : tokens.length === 0 ? (
 						<Empty>
 							<h3>
-								{allTokens.length
-									? "No matching keys"
-									: "One key. Your whole gateway."}
+								{allTokens.length ? "No matching keys" : "No keys issued"}
 							</h3>
 							<p>
 								{allTokens.length

@@ -80,8 +80,8 @@ export default function RedemptionPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="CREDIT DISTRIBUTION"
-				title="Give your next idea a little credit."
+				eyebrow="Manage"
+				title="Redemption codes"
 				description="Create single-use redemption codes to allocate quota without sharing account credentials."
 				actions={<RefreshButton onClick={list.reload} loading={list.loading} />}
 			/>

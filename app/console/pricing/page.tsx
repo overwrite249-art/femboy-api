@@ -109,8 +109,8 @@ export default function PricingPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="BILLING RULES"
-				title="Pricing, with your own perspective."
+				eyebrow="Manage"
+				title="Pricing"
 				description="Override model rates, map model names, and tailor price multipliers for routing groups."
 				actions={
 					<RefreshButton

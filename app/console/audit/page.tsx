@@ -75,8 +75,8 @@ export default function AuditPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="SECURITY & GOVERNANCE"
-				title="A trail you can follow."
+				eyebrow="System"
+				title="Audit trail"
 				description="Review administrative changes, trace who did what, and export the records you need."
 				actions={
 					<>
@@ -174,7 +174,7 @@ export default function AuditPage() {
 						<h3>
 							{query || action !== "all"
 								? "No matching events"
-								: "Your audit trail starts here"}
+								: "No events recorded yet"}
 						</h3>
 						<p>
 							Changes to keys, channels, users, and configuration will appear

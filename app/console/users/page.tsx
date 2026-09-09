@@ -162,9 +162,9 @@ export default function UsersPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="WORKSPACE ACCESS"
-				title="People, permissions, possibilities."
-				description="Give each application owner the right access and a deliberate quota balance."
+				eyebrow="Manage"
+				title="Users"
+				description="Set each account’s role, status and quota balance."
 				actions={
 					<>
 						<RefreshButton onClick={list.reload} loading={list.loading} />

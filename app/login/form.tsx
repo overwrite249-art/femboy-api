@@ -4,16 +4,7 @@ import { useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
-import {
-	ArrowLeft,
-	ArrowRight,
-	Boxes,
-	Eye,
-	EyeOff,
-	Code2,
-	ShieldCheck,
-	Wallet,
-} from "lucide-react"
+import { ArrowLeft, Eye, EyeOff, Code2 } from "lucide-react"
 import { Brand, ThemePicker } from "../components/interface.tsx"
 import { safeRedirect } from "../../lib/http/redirect.ts"
 
@@ -84,56 +75,27 @@ export default function LoginForm({
 	}
 
 	return (
-		<div className="auth-shell">
-			<aside className="auth-story">
-				<Link href="/">
+		<main className="auth">
+			<div className="auth-tools">
+				<Link className="subtle-link" href="/">
+					<ArrowLeft size={16} />
+					Back to home
+				</Link>
+				<ThemePicker />
+			</div>
+			<div className="auth-panel">
+				<Link className="auth-brand" href="/">
 					<Brand />
 				</Link>
-				<div className="auth-story-copy">
-					<span className="launch-badge">YOUR AI, CONNECTED</span>
-					<h2>
-						A home for your models.
-						<br />
-						<span>A head start for your ideas.</span>
-					</h2>
-					<p>
-						Your providers, your applications, and your next big thing. All
-						connected through one gateway.
-					</p>
-					<div className="auth-features">
-						<span>
-							<Boxes size={19} />
-							Bring your favorite model providers
-						</span>
-						<span>
-							<Wallet size={19} />
-							Keep usage and balances in view
-						</span>
-						<span>
-							<ShieldCheck size={19} />
-							Stay in control of every key
-						</span>
-					</div>
-				</div>
-				<p className="hint">
-					Self-hosted. Provider-independent. Intentionally yours.
-				</p>
-			</aside>
-			<main className="auth">
-				<div className="auth-tools">
-					<Link className="subtle-link" href="/">
-						<ArrowLeft size={16} />
-						Back to home
-					</Link>
-					<ThemePicker />
-				</div>
 				<form className="auth-card" onSubmit={submit}>
-					<Brand />
-					<div>
-						<span className="eyebrow">YOUR WORKSPACE AWAITS</span>
-						<h1 className="auth-title">Welcome back.</h1>
+					<div className="auth-head">
+						<span className="auth-kicker">Console access</span>
+						<h1 className="auth-title">Sign in</h1>
+						<p>
+							The console manages provider channels, gateway keys, balances and
+							usage for this deployment.
+						</p>
 					</div>
-					<p>Sign in to manage your gateway.</p>
 					{error ? (
 						<div className="auth-error" role="alert">
 							{error}
@@ -149,7 +111,6 @@ export default function LoginForm({
 							onChange={(event) => setUsername(event.target.value)}
 							required
 							maxLength={64}
-							placeholder="Your username"
 						/>
 					</div>
 					<div className="field">
@@ -164,7 +125,6 @@ export default function LoginForm({
 								onChange={(event) => setPassword(event.target.value)}
 								required
 								maxLength={1024}
-								placeholder="Enter your password"
 							/>
 							<button
 								className="icon-btn"
@@ -182,12 +142,7 @@ export default function LoginForm({
 						type="submit"
 						disabled={busy || checking}
 					>
-						{busy
-							? "Signing in…"
-							: checking
-								? "Checking session…"
-								: "Sign in to your console"}
-						<ArrowRight size={17} />
+						{busy ? "Signing in…" : checking ? "Checking session…" : "Sign in"}
 					</button>
 					{githubEnabled ? (
 						<>
@@ -201,21 +156,27 @@ export default function LoginForm({
 							</a>
 						</>
 					) : null}
-					<p className="hint">
-						Setting up for the first time?{" "}
-						<Link className="link" href="/setup">
-							Read the deployment guide.
-						</Link>
-					</p>
-					<div className="auth-note">
-						<ShieldCheck size={17} />
-						<span className="hint">
-							Console sessions are separate from API keys. Your password is
-							never used to authenticate model requests.
-						</span>
-					</div>
 				</form>
-			</main>
-		</div>
+				<dl className="auth-facts">
+					<div>
+						<dt>Session</dt>
+						<dd>
+							Console sessions are separate from API keys. This password never
+							authenticates model requests.
+						</dd>
+					</div>
+					<div>
+						<dt>First run</dt>
+						<dd>
+							The first administrator is created out of band. See the{" "}
+							<Link className="link" href="/setup">
+								deployment guide
+							</Link>
+							.
+						</dd>
+					</div>
+				</dl>
+			</div>
+		</main>
 	)
 }

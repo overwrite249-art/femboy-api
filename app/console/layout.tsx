@@ -25,7 +25,6 @@ import {
 	SlidersHorizontal,
 	UsersRound,
 	Wallet,
-	X,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Brand, Dialog, ThemePicker } from "../components/interface.tsx"
@@ -267,9 +266,6 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
 										>
 											<Icon size={19} />
 											<span className="nav-copy">{label}</span>
-											{href === "/console/playground" ? (
-												<span className="nav-new nav-copy">TRY</span>
-											) : null}
 										</Link>
 									))}
 							</div>
@@ -280,9 +276,9 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
 					<Link href="/console/docs" className="sidebar-help">
 						<BookOpen size={18} />
 						<span className="nav-copy">
-							Build something great
+							API reference
 							<small>
-								Read the API reference <ArrowRight size={13} />
+								Endpoints and examples <ArrowRight size={13} />
 							</small>
 						</span>
 					</Link>
@@ -415,7 +411,6 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
 								<LayersMark />
 								femboy / api
 							</span>
-							<span>Your infrastructure. Your keys. Your control.</span>
 							<Link href="/console/docs">
 								Developer reference <ArrowRight size={13} />
 							</Link>

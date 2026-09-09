@@ -5,13 +5,7 @@ import type { ReactNode } from "react"
 
 import { api } from "./api.ts"
 import { CopyButton } from "../components/interface.tsx"
-import {
-	Inbox,
-	RefreshCw,
-	Search,
-	ChevronLeft,
-	ChevronRight,
-} from "lucide-react"
+import { RefreshCw, Search, ChevronLeft, ChevronRight } from "lucide-react"
 
 /* ------------------------------------------------------------- formatting */
 
@@ -74,14 +68,10 @@ export function StatCard(props: {
 	label: string
 	value: string
 	sub?: ReactNode
-	icon?: ReactNode
 }) {
 	return (
 		<div className="card">
-			<div className="card-label">
-				{props.label}
-				{props.icon ? <span className="stat-icon">{props.icon}</span> : null}
-			</div>
+			<div className="card-label">{props.label}</div>
 			<div className="card-value">{props.value}</div>
 			{props.sub ? <div className="card-sub">{props.sub}</div> : null}
 		</div>
@@ -139,14 +129,7 @@ export function Callout(props: {
 }
 
 export function Empty(props: { children: ReactNode }) {
-	return (
-		<div className="empty">
-			<span className="empty-icon">
-				<Inbox size={28} />
-			</span>
-			{props.children}
-		</div>
-	)
+	return <div className="empty">{props.children}</div>
 }
 
 export function Loading(props: { rows?: number }) {

@@ -239,9 +239,9 @@ export default function ChannelsPage() {
 	return (
 		<>
 			<PageHeader
-				eyebrow="PROVIDER CONNECTIONS"
-				title="Your models, under one roof."
-				description="Connect providers, manage routing, and keep your applications independent of any one model."
+				eyebrow="Manage"
+				title="Provider channels"
+				description="Connect providers and control routing. Applications stay independent of any single model."
 				actions={
 					<>
 						<RefreshButton onClick={list.reload} loading={list.loading} />
@@ -316,7 +316,7 @@ export default function ChannelsPage() {
 							<h3>
 								{allChannels.length
 									? "No matching channels"
-									: "Meet your first provider"}
+									: "No channels configured"}
 							</h3>
 							<p>
 								{allChannels.length
