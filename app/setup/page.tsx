@@ -31,7 +31,7 @@ export default function SetupGuide() {
 				</div>
 				<ol className="guide-steps">
 					<li>
-						<h2>Connect your infrastructure</h2>
+						<h2>Set storage and secrets</h2>
 						<p>
 							Set your MongoDB connection and required server secrets in your
 							hosting provider’s environment settings. Use{" "}

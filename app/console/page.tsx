@@ -236,17 +236,17 @@ export default function OverviewPage() {
 								<Empty>
 									<h3>No usage recorded yet</h3>
 									<p>
-										Usage appears after requests are recorded and rolled up. We
-										never fill this view with sample traffic.
+										Usage appears after requests are recorded and rolled up.
+										Sample traffic is never inserted.
 									</p>
 									<Link className="btn btn-small" href="/console/playground">
 										<Play size={15} />
-										Explore playground
+										Open playground
 									</Link>
 								</Empty>
 							)}
 						</Panel>
-						<Panel title="Connection details" note="Your gateway">
+						<Panel title="Connection details">
 							<div className="endpoint-box">
 								<label>OpenAI-compatible base URL</label>
 								<div>

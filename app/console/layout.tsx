@@ -48,7 +48,7 @@ const NAV: NavEntry[] = [
 		label: "Overview",
 		group: "Workspace",
 		icon: LayoutDashboard,
-		description: "Your gateway at a glance",
+		description: "Deployment state and recent usage",
 		member: true,
 	},
 	{
@@ -150,7 +150,11 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
 	const [palette, setPalette] = useState(false)
 	const [query, setQuery] = useState("")
 	const [selected, setSelected] = useState(0)
+	const [host, setHost] = useState("")
 	const searchRef = useRef<HTMLInputElement>(null)
+	useEffect(() => {
+		setHost(window.location.host)
+	}, [])
 	useEffect(() => {
 		let cancelled = false
 		setMobile(false)
@@ -239,13 +243,9 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
 				>
 					<Brand compact={compact && !mobile} />
 				</Link>
-				<div className="workspace-switch">
-					<span className="workspace-icon">F</span>
-					<span className="nav-copy">
-						<strong>My gateway</strong>
-						<small>Personal workspace</small>
-					</span>
-					<span className="workspace-badge nav-copy">SELF-HOSTED</span>
+				<div className="deployment nav-copy">
+					<span className="deployment-label">Deployment</span>
+					<span className="deployment-host">{host || "\u2026"}</span>
 				</div>
 				<nav className="nav" aria-label="Main navigation">
 					{["Workspace", "Manage", "System"].map((group) =>
@@ -387,14 +387,13 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
 						{!checked ? (
 							<div className="session-loading" role="status">
 								<span className="loader" />
-								Opening your workspace…
+								Checking session…
 							</div>
 						) : !user ? (
 							<div className="empty">Redirecting to sign-in…</div>
 						) : !allowed ? (
 							<div className="restricted-state">
-								<ShieldCheck size={40} />
-								<h1>This area needs elevated access</h1>
+								<h1>Elevated access required</h1>
 								<p>
 									Your session is signed in as {user.role}. Ask a root
 									administrator if you need access.

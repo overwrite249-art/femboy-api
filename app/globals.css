@@ -366,46 +366,28 @@ pre {
 	padding: 27px 22px 24px;
 	color: #fff;
 }
-.workspace-switch {
+.deployment {
 	margin: 0 14px 20px;
-	padding: 12px 10px;
-	border: 1px solid #ffffff1c;
-	border-radius: 3px;
+	padding: 11px 0;
+	border-top: 1px solid #ffffff1c;
+	border-bottom: 1px solid #ffffff1c;
 	display: flex;
-	align-items: center;
-	gap: 10px;
-	position: relative;
-	min-height: 62px;
+	flex-direction: column;
+	gap: 3px;
 }
-.workspace-icon {
-	display: flex;
-	width: 30px;
-	height: 30px;
-	flex-shrink: 0;
-	align-items: center;
-	justify-content: center;
-	background: #ffffff0f;
-	color: #ecefe5;
-	font-size: 14px;
-	font-weight: 600;
-	border: 1px solid #ffffff1f;
-	border-radius: 3px;
-}
-.workspace-switch strong {
-	display: block;
-	font-size: 14px;
-	font-weight: 600;
-	color: #f2f4ea;
-	line-height: 1.2;
-}
-.workspace-switch small {
+.deployment-label {
+	font-family: var(--font-gateway-mono), Consolas, monospace;
+	font-size: 11px;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
 	color: #a3ab99;
-	font-size: 14px;
-	display: block;
-	margin-top: 4px;
 }
-.workspace-badge {
-	display: none;
+.deployment-host {
+	font-family: var(--font-gateway-mono), Consolas, monospace;
+	font-size: 13px;
+	line-height: 1.35;
+	color: #f2f4ea;
+	overflow-wrap: anywhere;
 }
 .nav {
 	padding: 0 12px;
@@ -526,10 +508,6 @@ pre {
 }
 .shell-compact .sidebar-brand {
 	padding: 27px 22px 24px;
-}
-.shell-compact .sidebar .workspace-switch {
-	padding: 12px 9px;
-	justify-content: center;
 }
 .shell-compact .sidebar .nav-item {
 	justify-content: center;
@@ -1579,17 +1557,6 @@ input[type="range"] {
 	padding: 20px 24px;
 	margin-bottom: 24px;
 }
-.setup-status-icon {
-	width: 44px;
-	height: 44px;
-	flex-shrink: 0;
-	color: var(--accent);
-	background: var(--accent-soft);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	border-radius: 3px;
-}
 .setup-status-banner strong {
 	font-size: 15px;
 }
@@ -1598,7 +1565,8 @@ input[type="range"] {
 	color: var(--muted);
 	margin-top: 4px;
 }
-.setup-status-banner .btn {
+.setup-status-banner .btn,
+.setup-status-banner .pill {
 	margin-left: auto;
 	flex-shrink: 0;
 }
@@ -1741,7 +1709,7 @@ input[type="range"] {
 .mobile-sidebar .sidebar-brand {
 	display: none;
 }
-.mobile-sidebar .workspace-switch {
+.mobile-sidebar .deployment {
 	margin-top: 18px;
 }
 .mobile-sidebar .sidebar-foot {
@@ -2648,17 +2616,9 @@ input[type="range"] {
 }
 .job-card-head {
 	display: flex;
-	justify-content: space-between;
 	align-items: center;
 	gap: 8px;
-	margin-bottom: 20px;
-}
-.job-icon {
-	display: flex;
-	padding: 8px;
-	border-radius: 3px;
-	background: var(--accent-soft);
-	color: var(--accent);
+	margin-bottom: 16px;
 }
 .job-card h3 {
 	font-size: 15px;
@@ -2740,7 +2700,7 @@ input[type="range"] {
 	scrollbar-width: thin;
 }
 .sidebar > .sidebar-brand,
-.sidebar > .workspace-switch,
+.sidebar > .deployment,
 .sidebar > .sidebar-foot {
 	flex-shrink: 0;
 }

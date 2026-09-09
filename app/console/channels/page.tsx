@@ -321,7 +321,7 @@ export default function ChannelsPage() {
 							<p>
 								{allChannels.length
 									? "Try a different search or reset your filters."
-									: "Bring your provider account. We handle routing, key rotation, and the gateway in between."}
+									: "Add a channel to point the gateway at a provider account and its model list."}
 							</p>
 							{allChannels.length ? (
 								<button

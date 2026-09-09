@@ -56,7 +56,7 @@ export default function DocsPage() {
 			<div className="docs-layout">
 				<div>
 					<section className="docs-section" id="quickstart">
-						<h2>Your first request</h2>
+						<h2>First request</h2>
 						<p>
 							Connect an enabled channel, fund the token owner’s balance, and
 							issue a gateway key. Set the key in your shell, choose a model

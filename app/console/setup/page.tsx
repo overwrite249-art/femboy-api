@@ -2,14 +2,7 @@
 import { useRef, useState } from "react"
 import type { FormEvent } from "react"
 import Link from "next/link"
-import {
-	ArrowRight,
-	ArrowUpRight,
-	CheckCircle2,
-	Clock3,
-	PlugZap,
-	ShieldCheck,
-} from "lucide-react"
+import { ArrowRight, ArrowUpRight, PlugZap, ShieldCheck } from "lucide-react"
 import { CopyButton } from "../../components/interface.tsx"
 import { api } from "../api.ts"
 import {
@@ -118,23 +111,16 @@ export default function SetupPage() {
 			) : null}
 			{data ? (
 				<div className="setup-status-banner">
-					<span className="setup-status-icon">
-						{data.configured ? (
-							<CheckCircle2 size={24} />
-						) : (
-							<PlugZap size={24} />
-						)}
-					</span>
 					<div>
 						<strong>
 							{data.configured
 								? "Scheduler configuration saved"
-								: "Your scheduler is ready to connect"}
+								: "Scheduler not configured"}
 						</strong>
 						<p>
 							{data.configured
 								? `${data.jobs.filter((job) => job.jobId).length} jobs linked · Last configured ${formatDate(data.configuredAt)}`
-								: "Eight maintenance jobs. One secure connection."}
+								: "Eight maintenance jobs are created from a cron-job.org API key."}
 						</p>
 					</div>
 					<Pill tone={data.configured ? "ok" : "warn"}>
@@ -209,7 +195,7 @@ export default function SetupPage() {
 						</p>
 					</form>
 				</Panel>
-				<Panel title="A quick connection guide" note="Before you begin">
+				<Panel title="Connection guide" note="Before you begin">
 					<ol className="setup-steps">
 						<li>
 							<strong>Get a management key</strong>
@@ -264,9 +250,6 @@ export default function SetupPage() {
 						{data.jobs.map((job) => (
 							<article className="job-card" key={job.name}>
 								<div className="job-card-head">
-									<span className="job-icon">
-										<Clock3 size={18} />
-									</span>
 									<Pill tone={job.jobId ? "ok" : "idle"}>
 										{job.jobId ? "Configured" : "Not connected"}
 									</Pill>

@@ -247,7 +247,9 @@ export default function TokensPage() {
 			<section className="section">
 				<div className="section-head">
 					<h2 className="section-title">Gateway keys</h2>
-					<span className="section-note">Your provider keys stay separate</span>
+					<span className="section-note">
+						Separate from provider credentials
+					</span>
 				</div>
 				<Panel>
 					<div className="toolbar">
