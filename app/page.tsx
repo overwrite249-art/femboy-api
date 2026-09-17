@@ -1,71 +1,76 @@
 import Link from "next/link";
-import localFont from "next/font/local";
-import { ArrowRight, ArrowUpRight, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import {
   LandingExamples,
   LandingNavigation,
   LandingWordmark,
-  ProductTour,
+  RouteDemo,
 } from "./components/landing-interactive.tsx";
 import styles from "./landing.module.css";
 
-const sans = localFont({
-  src: "../public/fonts/ibm-plex-sans-400-latin.woff2",
-  weight: "400 600",
-  display: "swap",
-  variable: "--font-gateway-sans",
-  fallback: ["Arial", "sans-serif"],
-});
-const mono = localFont({
-  src: "../public/fonts/ibm-plex-mono-400-latin.woff2",
-  weight: "400",
-  display: "swap",
-  variable: "--font-gateway-mono",
-  fallback: ["Consolas", "monospace"],
-});
-
 export const metadata = {
-  title: "Femboy API — A gateway you run yourself",
+  title: "Femboy API — one key in, every model out",
   description:
-    "A self-hosted AI gateway for OpenAI, Anthropic, Gemini and compatible providers. Control routing, scoped keys and usage on your own Vercel and MongoDB stack.",
+    "A self-hosted AI gateway for OpenAI, Anthropic, Gemini and compatible providers. Route requests, issue scoped keys and track quota on your own Vercel and MongoDB deployment.",
 };
+
 const repository = "https://github.com/overwrite249-art/femboy-api";
+
+const stages = [
+  {
+    name: "Scope",
+    text: "Check the gateway key: is the model allowed, is the key still live, is the caller's address in range.",
+  },
+  {
+    name: "Reserve",
+    text: "Hold quota against the owner's balance before anything leaves your deployment.",
+  },
+  {
+    name: "Route",
+    text: "Elect a healthy channel by priority, then by weight, and translate the request into that provider's dialect.",
+  },
+  {
+    name: "Settle",
+    text: "Record what the call used and settle the hold. Request metadata is kept; prompts are not archived.",
+  },
+];
+
 const faqs = [
   {
     question: "Is this a model subscription?",
     answer:
-      "No. This is gateway software that you host. You bring your own provider accounts; model usage and hosting are billed separately by those services. No model credits are included.",
+      "No. This is gateway software you host. You bring your own provider accounts, and those services bill you for model usage and hosting. No model credits are included.",
   },
   {
-    question: "Can I use my existing SDK?",
+    question: "Can I keep using my existing SDK?",
     answer:
-      "For OpenAI-compatible requests, change your client's base URL and use a gateway-issued key. Anthropic Messages and Gemini endpoints are also available. Supported features depend on the provider, model and gateway adapter you configure.",
+      "For OpenAI-compatible requests, change your client's base URL and use a gateway-issued key. Anthropic Messages and Gemini endpoints are also available. Which features work depends on the provider, model and adapter you configure.",
   },
   {
-    question: "Where are credentials stored?",
+    question: "Where do credentials live?",
     answer:
-      "Provider credentials are encrypted before database storage. Gateway keys are stored as digests, with the full value shown only when created or rotated. Server secrets belong in your hosting environment—not in source code or the public client.",
+      "Provider credentials are encrypted before they reach the database. Gateway keys are stored as digests, and the full value appears only when you create or rotate one. Server secrets belong in your hosting environment, never in source or the client bundle.",
   },
   {
     question: "Do I need Redis?",
     answer:
-      "No separate Redis account is required. MongoDB-only coordination supports shared limits, locks, queues and durable accounting. Use Atlas or a transaction-capable replica set. Upstash Redis remains an optional backend; the deployment documentation covers the tradeoffs.",
+      "No. MongoDB-only coordination covers shared limits, locks, queues and durable accounting; use Atlas or a transaction-capable replica set. Upstash Redis stays available as an optional backend, and the deployment docs cover the tradeoffs.",
   },
   {
-    question: "What is required for the first request?",
+    question: "What does the first request need?",
     answer:
-      "Configure the server environment, bootstrap the root account from a trusted machine, and connect the maintenance scheduler. Then add a provider channel, fund a user's quota balance and create a scoped gateway key. There is no public first-admin signup.",
+      "Configure the server environment, bootstrap the root account from a trusted machine and connect the maintenance scheduler. Then add a provider channel, fund a user's quota balance and create a scoped gateway key. There is no public first-admin signup.",
   },
   {
     question: "Can I modify the source?",
     answer:
-      "Yes. Femboy API is MIT-licensed. You can inspect the implementation, run your own deployment and adapt it. Review the license, security documentation and your providers' terms before production use.",
+      "Yes, it is MIT licensed. Read the implementation, run your own deployment and change what you need. Check the license, the security notes and your providers' terms before you put it in production.",
   },
 ];
 
 export default function LandingPage() {
   return (
-    <div className={`${styles.site} ${sans.variable} ${mono.variable}`}>
+    <div className={styles.site}>
       <a className="skip-link" href="#landing-content">
         Skip to content
       </a>
@@ -75,231 +80,210 @@ export default function LandingPage() {
           className={`${styles.shell} ${styles.hero}`}
           aria-labelledby="hero-title"
         >
-          <p className={styles.eyebrow}>
-            <span className={styles.square} aria-hidden="true" /> Independent
-            gateway software
-          </p>
-          <div className={styles.heroGrid}>
-            <div>
-              <h1 id="hero-title">
-                Run your own
-                <br />
-                AI gateway.
-              </h1>
-              <p className={styles.heroLead}>
-                One endpoint for your models. Routing, access and usage under
-                your control.
-              </p>
-              <div className={styles.heroActions}>
-                <Link href="/console" className={styles.primaryButton}>
-                  Open console <ArrowRight size={18} />
-                </Link>
-                <Link href="/setup" className={styles.textLink}>
-                  Deployment guide <ArrowUpRight size={17} />
-                </Link>
-              </div>
-            </div>
-            <aside
-              className={styles.heroNote}
-              aria-label="What you are deploying"
-            >
-              <span className={styles.marginLabel}>THE SHORT VERSION</span>
-              <p>
-                Bring your provider accounts.
-                <br />
-                Keep the infrastructure yours.
-              </p>
-              <dl>
-                <div>
-                  <dt>Runtime</dt>
-                  <dd>Vercel</dd>
-                </div>
-                <div>
-                  <dt>Storage</dt>
-                  <dd>MongoDB</dd>
-                </div>
-                <div>
-                  <dt>Source</dt>
-                  <dd>MIT licensed</dd>
-                </div>
-              </dl>
+          <div className={styles.heroCopy}>
+            <h1 id="hero-title" className={styles.display}>
+              One key in.
+              <br />
+              Every model out.
+            </h1>
+            <p className={styles.lead}>
+              A self-hosted AI gateway. Point an OpenAI, Anthropic or Gemini
+              client at your own deployment, and it routes to the provider
+              accounts you configured.
+            </p>
+            <div className={styles.heroActions}>
+              <Link href="/console" className={styles.primaryButton}>
+                Open console
+              </Link>
               <a
                 href={repository}
                 target="_blank"
                 rel="noreferrer"
-                className={styles.textLink}
+                className={styles.ghostButton}
               >
-                Read the source <ArrowUpRight size={16} />
+                Read the source
               </a>
-            </aside>
+            </div>
+            <p className={styles.heroFacts}>
+              <span>
+                Runs on <b>Vercel</b> and <b>MongoDB</b>
+              </span>
+              <span>
+                <b>MIT</b> licensed
+              </span>
+              <span>no model credits included</span>
+            </p>
           </div>
+          <RouteDemo />
         </section>
 
         <section
-          id="platform"
-          className={`${styles.shell} ${styles.productSection}`}
-          aria-labelledby="product-title"
+          id="routing"
+          className={`${styles.shell} ${styles.section}`}
+          aria-labelledby="routing-title"
         >
-          <div className={styles.sectionBar}>
-            <h2 id="product-title">Inside the gateway</h2>
-            <span>Interactive example · not live workspace data</span>
+          <div className={styles.sectionHead}>
+            <h2 id="routing-title" className={styles.title}>
+              Every request takes the same four steps.
+            </h2>
+            <div className={styles.sectionAside}>
+              <p className={styles.body}>
+                The gateway decides before it spends anything. If a step fails
+                the request stops there, and your provider account is never
+                touched.
+              </p>
+            </div>
           </div>
-          <ProductTour />
+          <ol className={styles.pipeline}>
+            {stages.map((stage, index) => (
+              <li className={styles.stage} key={stage.name}>
+                <span className={styles.stageIndex}>
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <h3>{stage.name}</h3>
+                <p>{stage.text}</p>
+              </li>
+            ))}
+          </ol>
         </section>
 
         <section
           className={`${styles.shell} ${styles.providers}`}
-          aria-label="Supported provider connections"
+          aria-labelledby="providers-title"
         >
-          <p>
-            Connect the accounts
-            <br className={styles.desktopBreak} /> you already use.
-          </p>
-          <ul>
-            <li>OpenAI</li>
-            <li>Anthropic</li>
-            <li>Google Gemini</li>
-            <li>OpenRouter</li>
-            <li className={styles.compatible}>+ compatible APIs</li>
-          </ul>
-          <span className={styles.providerNote}>
-            Independent software. No provider affiliation.
-          </span>
-        </section>
-
-        <section
-          id="control"
-          className={`${styles.shell} ${styles.section} ${styles.ownership}`}
-          aria-labelledby="control-title"
-        >
-          <div className={styles.sectionIntro}>
-            <p className={styles.eyebrow}>01 / In your control</p>
-            <h2 id="control-title">
-              Infrastructure.
-              <br />
-              Not another
-              <br className={styles.desktopBreak} /> subscription.
-            </h2>
-            <p>
-              Use the gateway as part of your own stack. Provider accounts,
-              access policy and deployment stay with you.
+          <h2 id="providers-title" className={styles.title}>
+            Connect the accounts you already have.
+          </h2>
+          <div>
+            <ul className={styles.providerList}>
+              <li>OpenAI</li>
+              <li>Anthropic</li>
+              <li>Google Gemini</li>
+              <li>OpenRouter</li>
+              <li>and compatible APIs</li>
+            </ul>
+            <p className={`${styles.tag}`} style={{ marginTop: "18px" }}>
+              independent software, not affiliated with any provider
             </p>
           </div>
-          <dl className={styles.ledger}>
-            <div>
-              <dt>
-                <span>01</span>Provider credentials
-              </dt>
-              <dd>
-                Encrypted before storage. Applications use separate gateway
-                keys, scoped by model, expiration and IP—not your upstream
-                credentials.
-              </dd>
-            </div>
-            <div>
-              <dt>
-                <span>02</span>Quota &amp; usage
-              </dt>
-              <dd>
-                Per-user balances and per-key quotas. Quota is reserved before a
-                call and settled against recorded usage. Logs keep request
-                metadata, not prompt content.
-              </dd>
-            </div>
-            <div>
-              <dt>
-                <span>03</span>Your deployment
-              </dt>
-              <dd>
-                Vercel and MongoDB, with an external maintenance scheduler. No
-                separate Redis account required. Source and operational details
-                are there to inspect.
-              </dd>
-            </div>
-          </dl>
         </section>
 
         <section
-          id="developers"
-          className={styles.developerSection}
-          aria-labelledby="developer-title"
+          className={`${styles.shell} ${styles.section}`}
+          aria-labelledby="control-title"
         >
-          <div className={`${styles.shell} ${styles.developerGrid}`}>
-            <div className={styles.sectionIntro}>
-              <p className={styles.eyebrow}>02 / Integration</p>
-              <h2 id="developer-title">Keep your SDK.</h2>
-              <p>
-                Point an OpenAI client at your gateway. Use a configured model
-                and a scoped key. The request format stays familiar.
+          <div className={styles.sectionHead}>
+            <h2 id="control-title" className={styles.title}>
+              Infrastructure, not another subscription.
+            </h2>
+            <div className={styles.sectionAside}>
+              <p className={styles.body}>
+                The gateway is a piece of your own stack. Provider accounts,
+                access policy and the deployment itself stay with you.
               </p>
-              <Link href="/console/docs" className={styles.textLink}>
-                Read the API reference <ArrowUpRight size={17} />
+            </div>
+          </div>
+          <div className={styles.ownership}>
+            <section>
+              <h3>Keys stay separated</h3>
+              <p>
+                Provider credentials are encrypted before storage. Applications
+                get their own gateway keys, scoped by model, expiry and
+                address, so no app ever holds your upstream credential.
+              </p>
+            </section>
+            <section>
+              <h3>Spending is reserved, then settled</h3>
+              <p>
+                Every user has a balance and every key can carry its own limit.
+                Quota is held before the call and settled against recorded
+                usage, so a failed request costs nothing.
+              </p>
+            </section>
+            <section>
+              <h3>The deployment is yours</h3>
+              <p>
+                Vercel and MongoDB with an external maintenance scheduler. No
+                separate Redis account needed, and the source and operational
+                notes are there to read.
+              </p>
+            </section>
+          </div>
+        </section>
+
+        <section
+          id="integration"
+          className={`${styles.shell} ${styles.section}`}
+          aria-labelledby="integration-title"
+        >
+          <div className={styles.developerGrid}>
+            <div className={styles.developerCopy}>
+              <h2 id="integration-title" className={styles.title}>
+                Keep your SDK.
+              </h2>
+              <p className={styles.body}>
+                Point an OpenAI client at your gateway, name a model you
+                configured and pass a scoped key. The request format does not
+                change.
+              </p>
+              <Link href="/console/docs" className={styles.quietLink}>
+                Read the API reference
               </Link>
-              <div className={styles.protocolNote}>
-                <span className={styles.marginLabel}>ALSO AVAILABLE</span>
-                <p>
-                  Anthropic Messages
-                  <br />
-                  Gemini content generation
-                  <br />
-                  Streaming on compatible models
-                </p>
-                <small>
-                  Capabilities depend on your configured provider and adapter.
-                </small>
-              </div>
+              <dl className={styles.alsoAvailable}>
+                <dt>Also available</dt>
+                <dd>Anthropic Messages</dd>
+                <dd>Gemini content generation</dd>
+                <dd>Streaming, where the model supports it</dd>
+              </dl>
             </div>
             <LandingExamples />
           </div>
         </section>
 
         <section
-          id="get-started"
-          className={`${styles.shell} ${styles.section} ${styles.setupSection}`}
-          aria-labelledby="setup-title"
+          id="deploy"
+          className={`${styles.shell} ${styles.section}`}
+          aria-labelledby="deploy-title"
         >
-          <div className={styles.sectionIntro}>
-            <p className={styles.eyebrow}>03 / Setup</p>
-            <h2 id="setup-title">
-              A small stack.
-              <br />A deliberate setup.
+          <div className={styles.sectionHead}>
+            <h2 id="deploy-title" className={styles.title}>
+              Three steps to a first request.
             </h2>
-            <p>
-              Start with infrastructure, then connect the services your first
-              request needs.
-            </p>
-            <Link href="/setup" className={styles.textLink}>
-              Full deployment guide <ArrowUpRight size={17} />
-            </Link>
+            <div className={styles.sectionAside}>
+              <p className={styles.body}>
+                Start with the infrastructure, then connect the services that
+                first request needs.
+              </p>
+              <Link href="/setup" className={styles.quietLink}>
+                Open the deployment guide
+              </Link>
+            </div>
           </div>
           <ol className={styles.setupSteps}>
             <li>
-              <span>01</span>
               <div>
                 <h3>Deploy the gateway</h3>
                 <p>
-                  Configure Vercel, MongoDB and server secrets. Bootstrap the
-                  root account from a trusted machine.
+                  Configure Vercel, MongoDB and your server secrets, then
+                  bootstrap the root account from a trusted machine.
                 </p>
               </div>
             </li>
             <li>
-              <span>02</span>
               <div>
                 <h3>Connect your services</h3>
                 <p>
-                  Set up the maintenance scheduler. Add a provider channel and
-                  the models it can serve.
+                  Set up the maintenance scheduler, add a provider channel and
+                  list the models it can serve.
                 </p>
               </div>
             </li>
             <li>
-              <span>03</span>
               <div>
                 <h3>Send a real request</h3>
                 <p>
-                  Fund a user's quota balance, issue a gateway key, and try your
-                  SDK or the playground.
+                  Fund a user's quota balance, issue a gateway key, then try it
+                  from your SDK or the playground.
                 </p>
               </div>
             </li>
@@ -308,34 +292,34 @@ export default function LandingPage() {
 
         <section
           id="questions"
-          className={`${styles.shell} ${styles.section} ${styles.faqSection}`}
+          className={`${styles.shell} ${styles.section}`}
           aria-labelledby="faq-title"
         >
-          <div className={styles.sectionIntro}>
-            <p className={styles.eyebrow}>A few practical details</p>
-            <h2 id="faq-title">Before you deploy.</h2>
-          </div>
-          <div className={styles.faqList}>
-            {faqs.map((item) => (
-              <details key={item.question}>
-                <summary>
-                  {item.question}
-                  <ChevronDown size={17} />
-                </summary>
-                <p>{item.answer}</p>
-              </details>
-            ))}
+          <div className={styles.faqGrid}>
+            <h2 id="faq-title" className={styles.title}>
+              Before you deploy.
+            </h2>
+            <div className={styles.faqList}>
+              {faqs.map((item) => (
+                <details key={item.question}>
+                  <summary>
+                    {item.question}
+                    <ChevronDown size={18} />
+                  </summary>
+                  <p>{item.answer}</p>
+                </details>
+              ))}
+            </div>
           </div>
         </section>
 
         <section className={styles.closing} aria-labelledby="closing-title">
           <div className={`${styles.shell} ${styles.closingInner}`}>
-            <div>
-              <p className={styles.eyebrow}>OPEN SOURCE. SELF-HOSTED.</p>
-              <h2 id="closing-title">Make it your gateway.</h2>
-            </div>
+            <h2 id="closing-title" className={styles.display}>
+              Make it your gateway.
+            </h2>
             <Link href="/console" className={styles.primaryButton}>
-              Open console <ArrowRight size={18} />
+              Open console
             </Link>
           </div>
         </section>
@@ -347,7 +331,7 @@ export default function LandingPage() {
         </div>
         <nav aria-label="Footer navigation">
           <a href={repository} target="_blank" rel="noreferrer">
-            GitHub <ArrowUpRight size={15} />
+            GitHub
           </a>
           <Link href="/setup">Deployment</Link>
           <a
@@ -355,22 +339,20 @@ export default function LandingPage() {
             target="_blank"
             rel="noreferrer"
           >
-            Security notes <ArrowUpRight size={15} />
+            Security notes
           </a>
           <a
             href={`${repository}/blob/main/LICENSE`}
             target="_blank"
             rel="noreferrer"
           >
-            MIT license <ArrowUpRight size={15} />
+            MIT license
           </a>
         </nav>
         <p className={styles.footerNote}>
-          Bring your own accounts. Review your providers' terms.
+          Bring your own accounts, and review your providers' terms before
+          production use.
         </p>
-        <a href="#landing-content" className={styles.backTop}>
-          Back to top ↑
-        </a>
       </footer>
     </div>
   );
