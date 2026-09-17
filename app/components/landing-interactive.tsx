@@ -3,15 +3,15 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import Link from "next/link";
-import { ArrowRight, ArrowUpRight, Menu, ShieldCheck } from "lucide-react";
+import { ChevronDown, Menu } from "lucide-react";
 import { CopyButton, Dialog, ThemePicker } from "./interface.tsx";
 import { landingExamples } from "../../lib/landing/examples.ts";
 import styles from "../landing.module.css";
 
 const repository = "https://github.com/overwrite249-art/femboy-api";
 const navigation = [
-  ["Product", "/#platform"],
-  ["Developers", "/#developers"],
+  ["Routing", "/#routing"],
+  ["Integration", "/#integration"],
   ["Deployment", "/setup"],
 ] as const;
 
@@ -61,10 +61,7 @@ export function LandingNavigation() {
               className={styles.navConsole}
               aria-label="Open console"
             >
-              <span>
-                <span className={styles.navOpenWord}>Open </span>console
-              </span>
-              <ArrowUpRight size={16} />
+              <span className={styles.navOpenWord}>Open&nbsp;</span>console
             </Link>
             <button
               className={styles.menuToggle}
@@ -74,7 +71,7 @@ export function LandingNavigation() {
               aria-controls={menuId}
               onClick={() => setOpen(true)}
             >
-              <Menu size={21} />
+              <Menu size={20} />
             </button>
           </div>
         </div>
@@ -93,16 +90,13 @@ export function LandingNavigation() {
           {navigation.map(([label, href]) => (
             <a href={href} key={label} onClick={() => setOpen(false)}>
               {label}
-              <ArrowRight size={17} />
             </a>
           ))}
           <a href="/#questions" onClick={() => setOpen(false)}>
             Questions
-            <ArrowRight size={17} />
           </a>
           <Link href="/login" onClick={() => setOpen(false)}>
             Sign in
-            <ArrowUpRight size={17} />
           </Link>
           <a
             href={repository}
@@ -110,8 +104,7 @@ export function LandingNavigation() {
             rel="noreferrer"
             onClick={() => setOpen(false)}
           >
-            GitHub
-            <ArrowUpRight size={17} />
+            Source on GitHub
           </a>
         </nav>
         <div className={styles.mobileTheme}>
@@ -120,6 +113,144 @@ export function LandingNavigation() {
         </div>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * Routing example.
+ *
+ * Channels are ordered by priority, the way the gateway evaluates them. Take
+ * one down and the election moves to the next healthy channel; take them all
+ * down and the request fails fast. Nothing here talks to a server.
+ */
+const channels = [
+  { provider: "OpenAI", id: "openai-primary", priority: 100, weight: 10 },
+  { provider: "Anthropic", id: "anthropic-primary", priority: 90, weight: 10 },
+  { provider: "Google Gemini", id: "gemini-primary", priority: 80, weight: 10 },
+  { provider: "OpenRouter", id: "openrouter-pool", priority: 70, weight: 5 },
+] as const;
+
+export function RouteDemo() {
+  const [down, setDown] = useState<boolean[]>(() => channels.map(() => false));
+  const [run, setRun] = useState(0);
+  const [drop, setDrop] = useState(40);
+  const bridge = useRef<HTMLDivElement | null>(null);
+  const joints = useRef<Array<HTMLSpanElement | null>>([]);
+
+  const elected = down.findIndex((isDown) => !isDown);
+  const anyDown = down.some(Boolean);
+
+  useEffect(() => {
+    const start = bridge.current;
+    const joint = elected >= 0 ? joints.current[elected] : null;
+    if (!start || !joint) return;
+    const from = start.getBoundingClientRect();
+    const to = joint.getBoundingClientRect();
+    setDrop(Math.max(16, Math.round(to.top + 28 - from.top)));
+    setRun((value) => value + 1);
+  }, [elected]);
+
+  return (
+    <div className={styles.panel}>
+      <div className={styles.panelHead}>
+        <h2>Routing example</h2>
+        <span className={styles.tag}>click a channel to take it down</span>
+      </div>
+      <div className={styles.panelBody}>
+        <p className={styles.request}>
+          <b>POST</b> /v1/chat/completions
+        </p>
+        <div className={styles.bridge} ref={bridge}>
+          {run > 0 && elected >= 0 ? (
+            <span
+              key={run}
+              className={styles.pulse}
+              style={{ "--drop": `${drop}px` } as React.CSSProperties}
+              aria-hidden="true"
+            />
+          ) : null}
+        </div>
+        <ul className={styles.channels}>
+          {channels.map((channel, index) => {
+            const isDown = down[index];
+            const isElected = index === elected;
+            return (
+              <li
+                key={channel.id}
+                className={styles.channel}
+                data-state={isDown ? "down" : "up"}
+                data-elected={isElected ? "true" : "false"}
+                data-reached={elected >= 0 && index <= elected ? "true" : "false"}
+              >
+                <span
+                  className={styles.conn}
+                  aria-hidden="true"
+                  ref={(element) => {
+                    joints.current[index] = element;
+                  }}
+                />
+                <button
+                  type="button"
+                  className={styles.channelButton}
+                  aria-pressed={isDown}
+                  aria-label={
+                    isDown
+                      ? `Bring ${channel.provider} back up`
+                      : `Take ${channel.provider} down`
+                  }
+                  onClick={() =>
+                    setDown((current) =>
+                      current.map((value, position) =>
+                        position === index ? !value : value,
+                      ),
+                    )
+                  }
+                >
+                  <span className={styles.channelName}>
+                    <strong>{channel.provider}</strong>
+                    <span>{channel.id}</span>
+                  </span>
+                  <span className={styles.channelMeta}>
+                    priority {channel.priority}
+                  </span>
+                  <span className={styles.channelMeta}>
+                    weight {channel.weight}
+                  </span>
+                  <span className={styles.channelState}>
+                    {isDown ? "down" : "healthy"}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <p
+        className={`${styles.verdict} ${elected < 0 ? styles.verdictDown : ""}`}
+        aria-live="polite"
+      >
+        {elected >= 0 ? (
+          <span>
+            Elected <b>{channels[elected].id}</b> at priority{" "}
+            {channels[elected].priority}.
+          </span>
+        ) : (
+          <span>
+            <b>No healthy channel.</b> The request fails with 503 and no quota
+            is spent.
+          </span>
+        )}
+        {anyDown ? (
+          <button
+            type="button"
+            className={styles.resetButton}
+            onClick={() => setDown(channels.map(() => false))}
+          >
+            bring all back up
+          </button>
+        ) : null}
+      </p>
+    </div>
   );
 }
 
@@ -143,204 +274,8 @@ function moveTab(
   refs[next]?.focus();
 }
 
-const views = [
-  {
-    name: "Routing",
-    href: "/console/channels",
-    action: "Manage channels",
-    label: "PROVIDER CHANNELS",
-    heading: "Priority first. Weight next.",
-    note: "Routing uses channels configured for the requested model and group.",
-    aside: "BEFORE THE PROVIDER CALL",
-    steps: [
-      ["Scope", "Check key, model and IP access."],
-      ["Quota", "Reserve against available balance."],
-      ["Route", "Apply health, priority and weight."],
-      ["Forward", "Use the configured provider channel."],
-    ],
-  },
-  {
-    name: "Access",
-    href: "/console/tokens",
-    action: "Manage gateway keys",
-    label: "APPLICATION ACCESS",
-    heading: "A separate key for each application.",
-    note: "Your application key is not your provider credential.",
-    aside: "A DELIBERATE KEY LIFECYCLE",
-    steps: [
-      ["Create", "Choose an owner and access policy."],
-      ["Store", "Keep the full key privately on your server."],
-      ["Rotate", "Replace or revoke when access changes."],
-    ],
-  },
-  {
-    name: "Usage",
-    href: "/console/usage",
-    action: "Inspect usage",
-    label: "REQUEST RECORDS",
-    heading: "Useful metadata. No prompt archive.",
-    note: "Recorded usage appears after real requests are processed and rolled up.",
-    aside: "ACCOUNTING ORDER",
-    steps: [
-      ["Reserve", "Check the owner balance and key quota."],
-      ["Request", "Send to a configured upstream channel."],
-      ["Settle", "Account for the recorded usage."],
-    ],
-  },
-] as const;
-
-export function ProductTour() {
-  const [active, setActive] = useState(0);
-  const id = useId();
-  const tabs = useRef<Array<HTMLButtonElement | null>>([]);
-  const view = views[active];
-  return (
-    <div className={styles.workbench}>
-      <div className={styles.workbenchBar}>
-        <div
-          className={styles.workbenchTabs}
-          role="tablist"
-          aria-label="Explore gateway capabilities"
-        >
-          {views.map((item, index) => (
-            <button
-              key={item.name}
-              type="button"
-              role="tab"
-              id={`${id}-tab-${index}`}
-              aria-selected={active === index}
-              aria-controls={`${id}-panel`}
-              tabIndex={active === index ? 0 : -1}
-              ref={(element) => {
-                tabs.current[index] = element;
-              }}
-              onClick={() => setActive(index)}
-              onKeyDown={(event) =>
-                moveTab(event, index, views.length, setActive, tabs.current)
-              }
-            >
-              {item.name}
-            </button>
-          ))}
-        </div>
-        <span className={styles.exampleLabel}>EXAMPLE / READ ONLY</span>
-      </div>
-      <div
-        role="tabpanel"
-        id={`${id}-panel`}
-        aria-labelledby={`${id}-tab-${active}`}
-        tabIndex={0}
-        className={styles.workbenchPanel}
-      >
-        <div className={styles.workspacePreview}>
-          <p className={styles.marginLabel}>{view.label}</p>
-          <h3>{view.heading}</h3>
-          {active === 0 ? (
-            <div className={styles.routingTable}>
-              <table>
-                <caption className="sr-only">
-                  Illustrative provider channel priorities and weights
-                </caption>
-                <thead>
-                  <tr>
-                    <th>Channel</th>
-                    <th>Priority</th>
-                    <th>Weight</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    ["OpenAI", "openai-primary", "100", "10"],
-                    ["Anthropic", "anthropic-primary", "90", "10"],
-                    ["Google Gemini", "gemini-primary", "80", "10"],
-                  ].map(([name, slug, priority, weight]) => (
-                    <tr key={slug}>
-                      <td>
-                        <strong>{name}</strong>
-                        <span>{slug}</span>
-                      </td>
-                      <td>{priority}</td>
-                      <td>{weight}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : active === 1 ? (
-            <dl className={styles.policyRows}>
-              <div>
-                <dt>Model scope</dt>
-                <dd>Named models or a prefix rule</dd>
-              </div>
-              <div>
-                <dt>Expiration</dt>
-                <dd>Optional timestamp</dd>
-              </div>
-              <div>
-                <dt>IP scope</dt>
-                <dd>Addresses or CIDR ranges</dd>
-              </div>
-              <div>
-                <dt>Quota</dt>
-                <dd>Key limit + owner balance</dd>
-              </div>
-              <div>
-                <dt>Stored token</dt>
-                <dd>One-way digest</dd>
-              </div>
-            </dl>
-          ) : (
-            <div className={styles.usagePreview}>
-              <div className={styles.usageSchema}>
-                <span>RECORDED</span>
-                <p>
-                  Model · outcome · latency
-                  <br />
-                  Token counts · quota
-                </p>
-              </div>
-              <div className={styles.usageSchema}>
-                <span>NOT IN USAGE LOGS</span>
-                <p>Prompt and completion content</p>
-              </div>
-              <p className={styles.noSample}>
-                No sample traffic is added to your workspace.
-              </p>
-            </div>
-          )}
-          <p className={styles.previewNote}>{view.note}</p>
-        </div>
-        <aside className={styles.requestPath}>
-          <p className={styles.marginLabel}>{view.aside}</p>
-          <ol>
-            {view.steps.map(([title, text], index) => (
-              <li key={title}>
-                <span className={styles.pathNumber}>
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <div>
-                  <h4>{title}</h4>
-                  <p>{text}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </aside>
-      </div>
-      <div className={styles.workbenchFooter}>
-        <span>
-          <ShieldCheck size={16} /> No credentials needed. Nothing is sent.
-        </span>
-        <Link href={view.href}>
-          {view.action}
-          <ArrowUpRight size={16} />
-        </Link>
-      </div>
-    </div>
-  );
-}
-
 const languages = ["JavaScript", "Python", "cURL"] as const;
+
 function HighlightedCode({ source }: { source: string }) {
   const parts = source.split(
     /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:import|from|const|await|new)\b)/g,
@@ -363,6 +298,7 @@ function HighlightedCode({ source }: { source: string }) {
     </code>
   );
 }
+
 export function LandingExamples() {
   const [origin, setOrigin] = useState("https://your-gateway.example");
   const [active, setActive] = useState(0);
@@ -416,12 +352,9 @@ export function LandingExamples() {
       >
         <HighlightedCode source={examples[language]} />
       </pre>
-      <p className={styles.codeScrollHint}>
-        Scroll horizontally to view the full example.
-      </p>
       <p className={styles.codeNote} id={`${id}-note`}>
-        Set <code>FEMBOY_API_KEY</code> in your server environment. Replace{" "}
-        <code>YOUR_MODEL</code> with a configured model. This page does not send
+        Set <code>FEMBOY_API_KEY</code> in your server environment and replace{" "}
+        <code>YOUR_MODEL</code> with a model you configured. This page sends no
         requests.
       </p>
     </div>
