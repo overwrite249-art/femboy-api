@@ -2,20 +2,36 @@ import type { ReactNode } from "react"
 import localFont from "next/font/local"
 
 import "./globals.css"
+import "./cozy.css"
 import { InterfaceProvider } from "./components/interface.tsx"
 
 /**
- * Archivo (SIL OFL 1.1) is a variable grotesque with weight and width axes.
- * The landing page drives both axes for display type; the console uses the
- * normal width. Self-hosted, so the browser makes no third-party font request.
+ * Every family is SIL OFL 1.1 and self-hosted, so the browser makes no
+ * third-party font request. Nunito carries body copy and the console UI,
+ * Young Serif sets display type, Caveat is reserved for short handwritten
+ * notes, and IBM Plex Mono stays on anything a reader would copy.
  */
 const sans = localFont({
-	src: "../public/fonts/archivo-var-latin.woff2",
-	weight: "100 900",
+	src: "../public/fonts/nunito-var-latin.woff2",
+	weight: "300 900",
 	style: "normal",
 	display: "swap",
 	variable: "--font-gateway-sans",
-	fallback: ["Helvetica Neue", "Arial", "sans-serif"],
+	fallback: ["ui-rounded", "Helvetica Neue", "Arial", "sans-serif"],
+})
+const display = localFont({
+	src: "../public/fonts/young-serif-400-latin.woff2",
+	weight: "400",
+	display: "swap",
+	variable: "--font-gateway-display",
+	fallback: ["Georgia", "Times New Roman", "serif"],
+})
+const hand = localFont({
+	src: "../public/fonts/caveat-var-latin.woff2",
+	weight: "500 700",
+	display: "swap",
+	variable: "--font-gateway-hand",
+	fallback: ["Segoe Print", "Bradley Hand", "cursive"],
 })
 const mono = localFont({
 	src: "../public/fonts/ibm-plex-mono-400-latin.woff2",
@@ -31,11 +47,15 @@ export const metadata = {
 		"A self-hosted AI gateway that speaks OpenAI, Anthropic and Gemini over one key.",
 }
 
+export const viewport = {
+	themeColor: "#ff5a78",
+}
+
 export default function RootLayout(props: { children: ReactNode }) {
 	return (
 		<html
 			lang="en"
-			className={`${sans.variable} ${mono.variable}`}
+			className={`${sans.variable} ${display.variable} ${hand.variable} ${mono.variable}`}
 			suppressHydrationWarning
 		>
 			<head>

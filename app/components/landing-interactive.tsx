@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import Link from "next/link";
-import { ChevronDown, Menu } from "lucide-react";
-import { CopyButton, Dialog, ThemePicker } from "./interface.tsx";
+import { Menu, RotateCcw } from "lucide-react";
+import { CopyButton, Dialog, HangerMark } from "./interface.tsx";
 import { landingExamples } from "../../lib/landing/examples.ts";
 import styles from "../landing.module.css";
 
@@ -13,16 +13,17 @@ const navigation = [
   ["Routing", "/#routing"],
   ["Integration", "/#integration"],
   ["Deployment", "/setup"],
+  ["Questions", "/#questions"],
 ] as const;
 
 export function LandingWordmark() {
   return (
     <span className={styles.wordmark}>
-      <span className={styles.monogram} aria-hidden="true">
-        f/
+      <span className={styles.wordmarkMark} aria-hidden="true">
+        <HangerMark size={22} />
       </span>
       <span>
-        femboy<span className={styles.wordmarkSuffix}> / api</span>
+        femboy<span className={styles.wordmarkSuffix}> api</span>
       </span>
     </span>
   );
@@ -53,9 +54,9 @@ export function LandingNavigation() {
             ))}
           </nav>
           <div className={styles.navTools}>
-            <div className={styles.desktopTheme}>
-              <ThemePicker />
-            </div>
+            <Link href="/login" className={styles.navSignIn}>
+              Sign in
+            </Link>
             <Link
               href="/console"
               className={styles.navConsole}
@@ -92,9 +93,6 @@ export function LandingNavigation() {
               {label}
             </a>
           ))}
-          <a href="/#questions" onClick={() => setOpen(false)}>
-            Questions
-          </a>
           <Link href="/login" onClick={() => setOpen(false)}>
             Sign in
           </Link>
@@ -107,10 +105,6 @@ export function LandingNavigation() {
             Source on GitHub
           </a>
         </nav>
-        <div className={styles.mobileTheme}>
-          <span>Appearance</span>
-          <ThemePicker />
-        </div>
       </Dialog>
     </>
   );
@@ -119,79 +113,123 @@ export function LandingNavigation() {
 /**
  * Routing example.
  *
- * Channels are ordered by priority, the way the gateway evaluates them. Take
- * one down and the election moves to the next healthy channel; take them all
- * down and the request fails fast. Nothing here talks to a server.
+ * Channels hang on the rail in priority order, the way the gateway evaluates
+ * them. Take one down and the election moves to the next healthy channel;
+ * take them all down and the request fails fast. Nothing here talks to a
+ * server.
  */
 const channels = [
-  { provider: "OpenAI", id: "openai-primary", priority: 100, weight: 10 },
-  { provider: "Anthropic", id: "anthropic-primary", priority: 90, weight: 10 },
-  { provider: "Google Gemini", id: "gemini-primary", priority: 80, weight: 10 },
-  { provider: "OpenRouter", id: "openrouter-pool", priority: 70, weight: 5 },
+  {
+    provider: "OpenAI",
+    id: "openai-primary",
+    priority: 100,
+    weight: 10,
+    garment: "/images/garment-1.webp",
+  },
+  {
+    provider: "Anthropic",
+    id: "anthropic-primary",
+    priority: 90,
+    weight: 10,
+    garment: "/images/garment-2.webp",
+  },
+  {
+    provider: "Google Gemini",
+    id: "gemini-primary",
+    priority: 80,
+    weight: 10,
+    garment: "/images/garment-3.webp",
+  },
+  {
+    provider: "OpenRouter",
+    id: "openrouter-pool",
+    priority: 70,
+    weight: 5,
+    garment: "/images/garment-4.webp",
+  },
 ] as const;
 
 export function RouteDemo() {
   const [down, setDown] = useState<boolean[]>(() => channels.map(() => false));
-  const [run, setRun] = useState(0);
-  const [drop, setDrop] = useState(40);
-  const bridge = useRef<HTMLDivElement | null>(null);
-  const joints = useRef<Array<HTMLSpanElement | null>>([]);
+  const [travel, setTravel] = useState<number | null>(null);
+  const rail = useRef<HTMLDivElement | null>(null);
+  const hooks = useRef<Array<HTMLSpanElement | null>>([]);
 
   const elected = down.findIndex((isDown) => !isDown);
   const anyDown = down.some(Boolean);
 
   useEffect(() => {
-    const start = bridge.current;
-    const joint = elected >= 0 ? joints.current[elected] : null;
-    if (!start || !joint) return;
-    const from = start.getBoundingClientRect();
-    const to = joint.getBoundingClientRect();
-    setDrop(Math.max(16, Math.round(to.top + 28 - from.top)));
-    setRun((value) => value + 1);
+    function measure() {
+      const start = rail.current;
+      const hook = elected >= 0 ? hooks.current[elected] : null;
+      if (!start || !hook) {
+        setTravel(null);
+        return;
+      }
+      const from = start.getBoundingClientRect();
+      const to = hook.getBoundingClientRect();
+      setTravel(Math.round(to.left + to.width / 2 - from.left));
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
   }, [elected]);
 
   return (
-    <div className={styles.panel}>
-      <div className={styles.panelHead}>
-        <h2>Routing example</h2>
-        <span className={styles.tag}>click a channel to take it down</span>
-      </div>
-      <div className={styles.panelBody}>
+    <div className={styles.rack}>
+      <div className={styles.rackHead}>
         <p className={styles.request}>
           <b>POST</b> /v1/chat/completions
         </p>
-        <div className={styles.bridge} ref={bridge}>
-          {run > 0 && elected >= 0 ? (
-            <span
-              key={run}
-              className={styles.pulse}
-              style={{ "--drop": `${drop}px` } as React.CSSProperties}
-              aria-hidden="true"
+        <p className={styles.rackHint}>
+          <svg
+            viewBox="0 0 60 34"
+            width="54"
+            height="30"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M4 6c14 0 30 6 40 22m0 0-1-9m1 9-9-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             />
-          ) : null}
-        </div>
-        <ul className={styles.channels}>
+          </svg>
+          tap a garment to take its channel down
+        </p>
+      </div>
+      <div className={styles.rail} ref={rail}>
+        <span className={styles.railBar} aria-hidden="true" />
+        <span
+          className={styles.courier}
+          data-visible={travel !== null ? "true" : "false"}
+          style={{ "--travel": `${travel ?? 0}px` } as CSSProperties}
+          aria-hidden="true"
+        />
+        <ul className={styles.hangers}>
           {channels.map((channel, index) => {
             const isDown = down[index];
             const isElected = index === elected;
             return (
               <li
                 key={channel.id}
-                className={styles.channel}
+                className={styles.hanger}
                 data-state={isDown ? "down" : "up"}
                 data-elected={isElected ? "true" : "false"}
-                data-reached={elected >= 0 && index <= elected ? "true" : "false"}
               >
                 <span
-                  className={styles.conn}
+                  className={styles.hook}
                   aria-hidden="true"
                   ref={(element) => {
-                    joints.current[index] = element;
+                    hooks.current[index] = element;
                   }}
                 />
                 <button
                   type="button"
-                  className={styles.channelButton}
+                  className={styles.garmentButton}
                   aria-pressed={isDown}
                   aria-label={
                     isDown
@@ -206,50 +244,59 @@ export function RouteDemo() {
                     )
                   }
                 >
-                  <span className={styles.channelName}>
-                    <strong>{channel.provider}</strong>
-                    <span>{channel.id}</span>
-                  </span>
-                  <span className={styles.channelMeta}>
-                    priority {channel.priority}
-                  </span>
-                  <span className={styles.channelMeta}>
-                    weight {channel.weight}
-                  </span>
-                  <span className={styles.channelState}>
-                    {isDown ? "down" : "healthy"}
-                  </span>
+                  <img
+                    className={styles.garment}
+                    src={channel.garment}
+                    alt=""
+                    width={293}
+                    height={360}
+                    loading="lazy"
+                    decoding="async"
+                  />
                 </button>
+                <div className={styles.tag}>
+                  <span className={styles.tagHole} aria-hidden="true" />
+                  <strong>{channel.provider}</strong>
+                  <code>{channel.id}</code>
+                  <span className={styles.tagMeta}>
+                    priority {channel.priority} · weight {channel.weight}
+                  </span>
+                  <span className={styles.tagState}>
+                    {isDown ? "down" : isElected ? "elected" : "healthy"}
+                  </span>
+                </div>
               </li>
             );
           })}
         </ul>
       </div>
-      <p
+      <div
         className={`${styles.verdict} ${elected < 0 ? styles.verdictDown : ""}`}
-        aria-live="polite"
       >
-        {elected >= 0 ? (
-          <span>
-            Elected <b>{channels[elected].id}</b> at priority{" "}
-            {channels[elected].priority}.
-          </span>
-        ) : (
-          <span>
-            <b>No healthy channel.</b> The request fails with 503 and no quota
-            is spent.
-          </span>
-        )}
+        <p aria-live="polite">
+          {elected >= 0 ? (
+            <>
+              Elected <b>{channels[elected].id}</b> at priority{" "}
+              {channels[elected].priority}.
+            </>
+          ) : (
+            <>
+              <b>No healthy channel.</b> The request fails with 503 and no
+              quota is spent.
+            </>
+          )}
+        </p>
         {anyDown ? (
           <button
             type="button"
             className={styles.resetButton}
             onClick={() => setDown(channels.map(() => false))}
           >
-            bring all back up
+            <RotateCcw size={16} />
+            Bring all back up
           </button>
         ) : null}
-      </p>
+      </div>
     </div>
   );
 }
@@ -310,6 +357,11 @@ export function LandingExamples() {
   return (
     <div className={styles.codePanel}>
       <div className={styles.codeToolbar}>
+        <span className={styles.codeDots} aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
         <div
           role="tablist"
           aria-label="Request example language"

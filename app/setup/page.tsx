@@ -19,7 +19,7 @@ export default function SetupGuide() {
 			<main className="guide">
 				<div className="page-heading">
 					<div>
-						<span className="eyebrow">DEPLOYMENT GUIDE</span>
+						<span className="eyebrow">Deployment guide</span>
 						<h1>Four steps to a working deployment.</h1>
 						<p>
 							Configure storage and secrets, create the first administrator,
@@ -28,6 +28,14 @@ export default function SetupGuide() {
 							repository.
 						</p>
 					</div>
+					<img
+						className="guide-art"
+						src="/images/yarn.webp"
+						alt=""
+						width={517}
+						height={560}
+						decoding="async"
+					/>
 				</div>
 				<ol className="guide-steps">
 					<li>

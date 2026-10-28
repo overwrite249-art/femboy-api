@@ -10,7 +10,7 @@ export default function LoginPage() {
 	return (
 		<Suspense
 			fallback={
-				<main className="auth">
+				<main className="auth auth-loading">
 					<p role="status">Loading sign-in…</p>
 				</main>
 			}

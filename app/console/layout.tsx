@@ -10,7 +10,6 @@ import {
 	BookOpen,
 	Boxes,
 	ChevronRight,
-	Command,
 	Gift,
 	KeyRound,
 	LayoutDashboard,
@@ -27,7 +26,12 @@ import {
 	Wallet,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
-import { Brand, Dialog, ThemePicker } from "../components/interface.tsx"
+import {
+	Brand,
+	Dialog,
+	HangerMark,
+	ThemePicker,
+} from "../components/interface.tsx"
 import { loadSession, signOut } from "./api.ts"
 import type { ConsoleUser } from "./api.ts"
 import { SessionContext } from "./session-context.tsx"
@@ -393,6 +397,14 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
 							<div className="empty">Redirecting to sign-in…</div>
 						) : !allowed ? (
 							<div className="restricted-state">
+								<img
+									className="state-art"
+									src="/images/wardrobe.webp"
+									alt=""
+									width={620}
+									height={524}
+									decoding="async"
+								/>
 								<h1>Elevated access required</h1>
 								<p>
 									Your session is signed in as {user.role}. Ask a root
@@ -407,8 +419,8 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
 						)}
 						<footer className="console-footer">
 							<span>
-								<LayersMark />
-								femboy / api
+								<HangerMark size={15} />
+								femboy api
 							</span>
 							<Link href="/console/docs">
 								Developer reference <ArrowRight size={13} />
@@ -492,7 +504,4 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
 			</div>
 		</SessionContext.Provider>
 	)
-}
-function LayersMark() {
-	return <Command size={13} />
 }

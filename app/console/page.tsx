@@ -8,7 +8,6 @@ import {
 	Empty,
 	ErrorNote,
 	Loading,
-	PageHeader,
 	Panel,
 	Pill,
 	RefreshButton,
@@ -18,6 +17,8 @@ import {
 	formatUsd,
 	quotaToUsd,
 	useApi,
+	useGreeting,
+	WelcomeBanner,
 } from "./ui.tsx"
 
 type Overview = {
@@ -47,13 +48,16 @@ export default function OverviewPage() {
 	const admin = user?.role === "root" || user?.role === "admin"
 	const overview = useApi<Overview>(admin ? "/api/admin/overview" : null)
 	const origin = useOrigin()
+	const greeting = useGreeting()
+	const name = user?.displayName || user?.username || ""
+	const title = name ? `${greeting}, ${name}` : greeting
 	const data = overview.data
 	if (!admin)
 		return (
 			<>
-				<PageHeader
-					eyebrow="Console"
-					title="Your access"
+				<WelcomeBanner
+					eyebrow="your access"
+					title={title}
 					description="Send requests with a gateway key issued to your account. The reference documents the supported endpoints."
 				/>
 				<div className="quick-actions">
@@ -73,9 +77,9 @@ export default function OverviewPage() {
 		)
 	return (
 		<>
-			<PageHeader
-				eyebrow="Console"
-				title="Overview"
+			<WelcomeBanner
+				eyebrow="overview"
+				title={title}
 				description="Recorded usage for the current UTC month, plus the configuration of this deployment."
 				actions={
 					<>

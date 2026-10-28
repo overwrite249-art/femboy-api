@@ -146,17 +146,37 @@ export function InterfaceProvider({ children }: { children: ReactNode }) {
 export const useToast = () => useContext(ToastContext)
 export const useConfirm = () => useContext(ConfirmContext)
 
+/** A clothes hanger, drawn on the same 32px grid as the icon set. */
+export function HangerMark({ size = 20 }: { size?: number }) {
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox="0 0 32 32"
+			aria-hidden="true"
+			focusable="false"
+		>
+			<path
+				d="M12.8 8.6a3.2 3.2 0 1 1 3.2 3.2v1.8M16 13.6 5.2 21.1C3.9 22 4.5 24 6.1 24h19.8c1.6 0 2.2-2 .9-2.9L16 13.6Z"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2.4"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
+	)
+}
+
 export function Brand({ compact = false }: { compact?: boolean }) {
 	return (
 		<span className="brand">
 			<span className="brand-mark" aria-hidden="true">
-				f/
+				<HangerMark />
 			</span>
 			{!compact ? (
-				<span>
-					<span className="brand-name">
-						femboy<span className="brand-api"> / api</span>
-					</span>
+				<span className="brand-name">
+					femboy<span className="brand-api"> api</span>
 				</span>
 			) : null}
 		</span>

@@ -83,6 +83,27 @@ export default function LoginForm({
 				</Link>
 				<ThemePicker />
 			</div>
+			<div className="auth-art">
+				<div className="auth-art-copy">
+					<span className="auth-art-hand">welcome back</span>
+					<p className="auth-art-title">
+						Your channels, keys and balances are right where you left them.
+					</p>
+					<p className="auth-art-note">
+						Sign in to manage providers, issue gateway keys and follow usage
+						for this deployment.
+					</p>
+				</div>
+				<figure className="auth-art-figure" aria-hidden="true">
+					<img
+						src="/images/coat-rack.webp"
+						alt=""
+						width={438}
+						height={760}
+						decoding="async"
+					/>
+				</figure>
+			</div>
 			<div className="auth-panel">
 				<Link className="auth-brand" href="/">
 					<Brand />

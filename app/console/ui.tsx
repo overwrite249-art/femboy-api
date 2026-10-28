@@ -129,7 +129,65 @@ export function Callout(props: {
 }
 
 export function Empty(props: { children: ReactNode }) {
-	return <div className="empty">{props.children}</div>
+	return (
+		<div className="empty">
+			<img
+				className="empty-art"
+				src="/images/hanger.webp"
+				alt=""
+				width={480}
+				height={398}
+				loading="lazy"
+				decoding="async"
+			/>
+			{props.children}
+		</div>
+	)
+}
+
+/** Time-of-day greeting, resolved after mount so it uses the reader's clock. */
+export function useGreeting(): string {
+	const [greeting, setGreeting] = useState("Hello")
+	useEffect(() => {
+		const hour = new Date().getHours()
+		setGreeting(
+			hour >= 5 && hour < 12
+				? "Good morning"
+				: hour >= 12 && hour < 18
+					? "Good afternoon"
+					: "Good evening",
+		)
+	}, [])
+	return greeting
+}
+
+export function WelcomeBanner(props: {
+	eyebrow: string
+	title: string
+	description: string
+	actions?: ReactNode
+}) {
+	return (
+		<section className="welcome" aria-labelledby="welcome-title">
+			<div className="welcome-copy">
+				<span className="welcome-hand">{props.eyebrow}</span>
+				<h1 id="welcome-title">{props.title}</h1>
+				<p>{props.description}</p>
+				{props.actions ? (
+					<div className="welcome-actions">{props.actions}</div>
+				) : null}
+			</div>
+			<div className="welcome-art" aria-hidden="true">
+				<img
+					src="/images/desk.webp"
+					alt=""
+					width={1100}
+					height={331}
+					decoding="async"
+				/>
+			</div>
+		</section>
+	)
 }
 
 export function Loading(props: { rows?: number }) {
